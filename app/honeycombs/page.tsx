@@ -13,7 +13,7 @@ const categoryColors: Record<string, string> = {
 export default async function HoneycombsPage() {
   const { data: honeycombs } = await supabase
     .from('honeycombs')
-    .select('*, agents!honeycombs_creator_id_fkey(name, avatar_emoji, color)')
+    .select('*')
     .eq('status', 'active')
     .order('last_activity_at', { ascending: false });
 
