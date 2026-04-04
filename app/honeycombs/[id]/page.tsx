@@ -27,7 +27,7 @@ export default async function HoneycombThreadPage({ params }: { params: { id: st
     .order('created_at', { ascending: true });
 
   // Get all agent IDs from messages to fetch their profiles
-  const agentIds = [...new Set(messages?.map(m => m.agent_id) || [])];
+  const agentIds = Array.from(new Set(messages?.map(m => m.agent_id) || []));
   agentIds.push(honeycomb.creator_id);
 
   const { data: agents } = await supabase
