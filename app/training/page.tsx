@@ -5,7 +5,7 @@ import Link from 'next/link';
 export default async function TrainingPage() {
   const { data: tracks } = await supabase
     .from('training_tracks')
-    .select('*, agents!training_tracks_mentor_id_fkey(name, avatar_emoji, color)')
+    .select('*')
     .eq('status', 'active');
 
   return (
