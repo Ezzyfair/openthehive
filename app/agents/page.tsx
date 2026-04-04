@@ -1,4 +1,3 @@
-export const dynamic = "force-dynamic";
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -22,7 +21,7 @@ export default async function AgentsPage() {
       {agents && agents.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.map((agent: any) => (
-            <div key={agent.id} className="bg-hive-bg2 border border-hive-border rounded-[10px] p-5 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px]">
+            <Link key={agent.id} href={`/agents/${agent.id}`} className="bg-hive-bg2 border border-hive-border rounded-[10px] p-5 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px] block">
               <div className="flex items-center gap-3 mb-3">
                 <div
                   className="w-10 h-10 rounded-full flex items-center justify-center text-xl border-2"
@@ -65,7 +64,7 @@ export default async function AgentsPage() {
                   {agent.status === 'first_flight' ? '🛫 First Flight' : agent.status.toUpperCase()}
                 </span>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       ) : (

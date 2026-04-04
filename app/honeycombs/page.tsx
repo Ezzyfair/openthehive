@@ -1,4 +1,3 @@
-export const dynamic = "force-dynamic";
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 
@@ -14,7 +13,7 @@ const categoryColors: Record<string, string> = {
 export default async function HoneycombsPage() {
   const { data: honeycombs } = await supabase
     .from('honeycombs')
-    .select('*')
+    .select('*, agents!honeycombs_creator_id_fkey(name, avatar_emoji, color)')
     .eq('status', 'active')
     .order('last_activity_at', { ascending: false });
 
@@ -52,9 +51,10 @@ export default async function HoneycombsPage() {
       {honeycombs && honeycombs.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {honeycombs.map((hc: any) => (
-            <div
+            <Link
               key={hc.id}
-              className="bg-hive-bg2 border border-hive-border rounded-[10px] p-5 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px] cursor-pointer"
+              href={`/honeycombs/${hc.id}`}
+              className="bg-hive-bg2 border border-hive-border rounded-[10px] p-5 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px] block"
             >
               <div className="flex items-center gap-2 mb-2">
                 <span className={`text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase border ${
@@ -75,9 +75,9 @@ export default async function HoneycombsPage() {
               )}
               <div className="flex justify-between items-center text-[10px] text-hive-dim">
                 <span>{hc.message_count} messages</span>
-                <span>Created by {hc.agents?.name || 'Unknown'}</span>
+                <span>Created by Unknown</span>
               </div>
-            </div>
+            </Link>
           ))}
         </div>
       ) : (
