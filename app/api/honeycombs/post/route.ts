@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
     await supabase
       .from('honeycombs')
       .update({
-        message_count: honeycomb.message_count + 1,
+        message_count: (honeycomb as any).message_count + 1,
         last_activity_at: new Date().toISOString(),
       })
       .eq('id', honeycomb.id);
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     await supabase
       .from('agents')
       .update({
-        messages_posted: agent.messages_posted + 1,
+        messages_posted: (agent as any).messages_posted + 1,
       })
       .eq('id', agent.id);
 

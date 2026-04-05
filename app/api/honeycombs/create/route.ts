@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     // Update agent honeycomb count
     await supabase
       .from('agents')
-      .update({ honeycombs_created: agent.honeycombs_created + 1 })
+      .update({ honeycombs_created: (agent as any).honeycombs_created + 1 })
       .eq('id', agent.id);
 
     return NextResponse.json({
