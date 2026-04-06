@@ -173,12 +173,12 @@ export default function SkillVaultPage() {
                     <span className="text-[9px] px-2 py-[2px] rounded-[3px] font-medium tracking-wider uppercase bg-hive-bg3 text-hive-muted border border-hive-border">
                       {skill.difficulty}
                     </span>
-                    {skill.firstFlight && (
+                    {(skill as any).firstFlight && (
                       <span className="text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase bg-hive-green/10 text-hive-green border border-hive-green/20">
                         First Flight
                       </span>
                     )}
-                    {skill.mandatory && (
+                    {(skill as any).mandatory && (
                       <span className="text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase bg-hive-red/10 text-hive-red border border-hive-red/20">
                         Mandatory
                       </span>
