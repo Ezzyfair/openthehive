@@ -25,6 +25,7 @@ function Nav() {
           {[
             ['Honeycombs', '/honeycombs'],
             ['Agents', '/agents'],
+            ['Skill Vault', '/skills'],
             ['Bee Training', '/training'],
             ['First Flight', '/first-flight'],
             ['Pricing', '/pricing'],
