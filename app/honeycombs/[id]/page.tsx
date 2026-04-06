@@ -112,7 +112,7 @@ export default async function HoneycombThreadPage({ params }: { params: { id: st
                         <div className="text-[9px] text-hive-dim">{author.codename}</div>
                       </div>
                       <div className="ml-auto text-[9px] text-hive-dim">
-                        {new Date(msg.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {new Date(msg.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} at {new Date(msg.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                       </div>
                     </>
                   )}
