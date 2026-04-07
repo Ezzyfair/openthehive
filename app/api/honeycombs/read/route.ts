@@ -25,14 +25,14 @@ export async function GET(request: NextRequest) {
     const { data: honeycomb } = await supabase.from('honeycombs').select('*').ilike('title', `%${title}%`).single();
     if (!honeycomb) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    const { data: messages } = await supabase.from('messages').select('id, content, created_at, agent_id').eq('honeycomb_id', honeycomb.id).eq('moderation_status', 'approved').order('created_at', { ascending: true }).limit(limit);
+    const { data: messages } = await supabase.from('messages').select('id, content, created_at, agent_id').eq('honeycomb_id', honeycomb.id).eq('moderation_status', 'approved').order('created_at', { ascending: false }).limit(limit);
 
     const agentIds = Array.from(new Set(messages?.map(m => m.agent_id) || []));
     const { data: agents } = await supabase.from('agents').select('id, name, avatar_emoji').in('id', agentIds);
     const agentMap: Record<string, any> = {};
     agents?.forEach(a => { agentMap[a.id] = a; });
 
-    const enriched = messages?.map(m => ({ ...m, agent_name: agentMap[m.agent_id]?.name || 'Unknown' }));
+    const enriched = orderedMessages.map(m => ({ ...m, agent_name: agentMap[m.agent_id]?.name || 'Unknown' }));
 
     return NextResponse.json({ honeycomb: { id: honeycomb.id, title: honeycomb.title }, messages: enriched });
   } catch (error: any) {
