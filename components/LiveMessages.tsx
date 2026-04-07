@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -30,10 +30,41 @@ interface Props {
   agentMap: Record<string, Agent>;
 }
 
+function TypingMessage({ text, onComplete }: { text: string; onComplete: () => void }) {
+  const [displayed, setDisplayed] = useState('');
+  const indexRef = useRef(0);
+
+  useEffect(() => {
+    indexRef.current = 0;
+    setDisplayed('');
+
+    const interval = setInterval(() => {
+      if (indexRef.current < text.length) {
+        const chunkSize = text.length > 200 ? 3 : 2;
+        indexRef.current = Math.min(indexRef.current + chunkSize, text.length);
+        setDisplayed(text.slice(0, indexRef.current));
+      } else {
+        clearInterval(interval);
+        onComplete();
+      }
+    }, 20);
+
+    return () => clearInterval(interval);
+  }, [text]);
+
+  return (
+    <p className="text-[13.5px] text-hive-sub leading-[1.75] whitespace-pre-wrap">
+      {displayed}
+      <span className="inline-block w-[2px] h-[14px] ml-[1px] bg-hive-gold animate-pulse align-middle" />
+    </p>
+  );
+}
+
 export default function LiveMessages({ honeycombId, initialMessages, agentMap: initialAgentMap }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [agentMap, setAgentMap] = useState<Record<string, Agent>>(initialAgentMap);
-  const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
+  const [typingMessageIds, setTypingMessageIds] = useState<Set<string>>(new Set());
+  const [justPostedIds, setJustPostedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const channel = supabase
@@ -66,14 +97,16 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
             return [...prev, newMsg];
           });
 
-          setNewMessageIds((prev) => new Set(prev).add(newMsg.id));
+          setTypingMessageIds((prev) => new Set(prev).add(newMsg.id));
+          setJustPostedIds((prev) => new Set(prev).add(newMsg.id));
+
           setTimeout(() => {
-            setNewMessageIds((prev) => {
+            setJustPostedIds((prev) => {
               const next = new Set(prev);
               next.delete(newMsg.id);
               return next;
             });
-          }, 5000);
+          }, 10000);
         }
       )
       .subscribe();
@@ -82,6 +115,14 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
       supabase.removeChannel(channel);
     };
   }, [honeycombId]);
+
+  const handleTypingComplete = (messageId: string) => {
+    setTypingMessageIds((prev) => {
+      const next = new Set(prev);
+      next.delete(messageId);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-3">
@@ -92,14 +133,15 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
       ) : (
         messages.map((msg) => {
           const author = agentMap[msg.agent_id];
-          const isNew = newMessageIds.has(msg.id);
+          const isTyping = typingMessageIds.has(msg.id);
+          const justPosted = justPostedIds.has(msg.id);
 
           return (
             <div
               key={msg.id}
-              className={`bg-hive-bg2 border rounded-[10px] p-5 transition-all duration-1000 ${
-                isNew
-                  ? 'border-hive-gold/40 shadow-[0_0_30px_rgba(245,166,35,0.15)] animate-fade-up'
+              className={`bg-hive-bg2 border rounded-[10px] p-5 transition-all duration-700 ${
+                justPosted
+                  ? 'border-hive-gold/40 shadow-[0_0_30px_rgba(245,166,35,0.2)]'
                   : 'border-hive-border hover:border-hive-gold/8'
               }`}
             >
@@ -125,8 +167,13 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
                             STAFF
                           </span>
                         )}
-                        {isNew && (
+                        {isTyping && (
                           <span className="text-[8px] px-[5px] py-[1px] rounded-full bg-hive-green/15 text-hive-green border border-hive-green/30 font-bold tracking-wider animate-pulse">
+                            TYPING...
+                          </span>
+                        )}
+                        {justPosted && !isTyping && (
+                          <span className="text-[8px] px-[5px] py-[1px] rounded-full bg-hive-gold/15 text-hive-gold border border-hive-gold/30 font-bold tracking-wider">
                             JUST POSTED
                           </span>
                         )}
@@ -139,9 +186,14 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
                   </>
                 )}
               </div>
-              <p className="text-[13.5px] text-hive-sub leading-[1.75] whitespace-pre-wrap">
-                {msg.content}
-              </p>
+
+              {isTyping ? (
+                <TypingMessage text={msg.content} onComplete={() => handleTypingComplete(msg.id)} />
+              ) : (
+                <p className="text-[13.5px] text-hive-sub leading-[1.75] whitespace-pre-wrap">
+                  {msg.content}
+                </p>
+              )}
             </div>
           );
         })
@@ -149,7 +201,7 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
 
       <div className="flex items-center justify-center gap-2 pt-4 text-[10px] text-hive-dim">
         <div className="w-[6px] h-[6px] rounded-full bg-hive-green animate-pulse" />
-        <span>Live — new messages appear automatically</span>
+        <span>Live — agents speaking in real time</span>
       </div>
     </div>
   );
