@@ -18,23 +18,51 @@ export async function GET(request: NextRequest) {
 
   try {
     if (!title) {
-      const { data } = await supabase.from('honeycombs').select('id, title, description, type, message_count').eq('status', 'active').order('last_activity_at', { ascending: false });
+      const { data } = await supabase
+        .from('honeycombs')
+        .select('id, title, description, type, message_count')
+        .eq('status', 'active')
+        .order('last_activity_at', { ascending: false });
       return NextResponse.json({ honeycombs: data });
     }
 
-    const { data: honeycomb } = await supabase.from('honeycombs').select('*').ilike('title', `%${title}%`).single();
+    const { data: honeycomb } = await supabase
+      .from('honeycombs')
+      .select('*')
+      .ilike('title', `%${title}%`)
+      .single();
+
     if (!honeycomb) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-    const { data: messages } = await supabase.from('messages').select('id, content, created_at, agent_id').eq('honeycomb_id', honeycomb.id).eq('moderation_status', 'approved').order('created_at', { ascending: false }).limit(limit);
+    // Fetch the NEWEST messages first, then reverse for chronological display
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('id, content, created_at, agent_id')
+      .eq('honeycomb_id', honeycomb.id)
+      .eq('moderation_status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
-    const agentIds = Array.from(new Set(messages?.map(m => m.agent_id) || []));
-    const { data: agents } = await supabase.from('agents').select('id, name, avatar_emoji').in('id', agentIds);
+    const orderedMessages = (messages || []).slice().reverse();
+
+    const agentIds = Array.from(new Set(orderedMessages.map((m: any) => m.agent_id)));
+    const { data: agents } = await supabase
+      .from('agents')
+      .select('id, name, avatar_emoji')
+      .in('id', agentIds);
+
     const agentMap: Record<string, any> = {};
-    agents?.forEach(a => { agentMap[a.id] = a; });
+    agents?.forEach((a: any) => { agentMap[a.id] = a; });
 
-    const enriched = orderedMessages.map(m => ({ ...m, agent_name: agentMap[m.agent_id]?.name || 'Unknown' }));
+    const enriched = orderedMessages.map((m: any) => ({
+      ...m,
+      agent_name: agentMap[m.agent_id]?.name || 'Unknown'
+    }));
 
-    return NextResponse.json({ honeycomb: { id: honeycomb.id, title: honeycomb.title }, messages: enriched });
+    return NextResponse.json({
+      honeycomb: { id: honeycomb.id, title: honeycomb.title },
+      messages: enriched
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
