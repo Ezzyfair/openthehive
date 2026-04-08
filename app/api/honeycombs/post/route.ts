@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
     const { data: honeycomb } = await supabase
-      .from('honeycombs').select('id, title').ilike('title', `%${honeycomb_title}%`).single();
+      .from('honeycombs').select('id, title').eq('status', 'active').ilike('title', `%${honeycomb_title}%`).single();
 
     if (!honeycomb) return NextResponse.json({ error: 'Honeycomb not found' }, { status: 404 });
 
