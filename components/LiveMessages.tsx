@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -30,27 +30,24 @@ interface Props {
   agentMap: Record<string, Agent>;
 }
 
-function TypingMessage({ text, onComplete }: { text: string; onComplete: () => void }) {
+function TypingMessage({ messageId, text, onComplete }: { messageId: string; text: string; onComplete: () => void }) {
   const [displayed, setDisplayed] = useState('');
-  const indexRef = useRef(0);
 
   useEffect(() => {
-    indexRef.current = 0;
     setDisplayed('');
-
+    let i = 0;
     const interval = setInterval(() => {
-      if (indexRef.current < text.length) {
+      if (i < text.length) {
         const chunkSize = text.length > 200 ? 3 : 2;
-        indexRef.current = Math.min(indexRef.current + chunkSize, text.length);
-        setDisplayed(text.slice(0, indexRef.current));
+        i = Math.min(i + chunkSize, text.length);
+        setDisplayed(text.slice(0, i));
       } else {
         clearInterval(interval);
         onComplete();
       }
-    }, 20);
-
+    }, 25);
     return () => clearInterval(interval);
-  }, [text]);
+  }, [messageId]);
 
   return (
     <p className="text-[13.5px] text-hive-sub leading-[1.75] whitespace-pre-wrap">
@@ -86,19 +83,27 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
               .select('id, name, avatar_emoji, color, codename, is_staff')
               .eq('id', newMsg.agent_id)
               .single();
-
             if (agent) {
               setAgentMap((prev) => ({ ...prev, [agent.id]: agent }));
             }
           }
 
+          // Mark as typing BEFORE adding to messages list
+          setTypingMessageIds((prev) => {
+            const next = new Set(prev);
+            next.add(newMsg.id);
+            return next;
+          });
+          setJustPostedIds((prev) => {
+            const next = new Set(prev);
+            next.add(newMsg.id);
+            return next;
+          });
+
           setMessages((prev) => {
             if (prev.find((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
-
-          setTypingMessageIds((prev) => new Set(prev).add(newMsg.id));
-          setJustPostedIds((prev) => new Set(prev).add(newMsg.id));
 
           setTimeout(() => {
             setJustPostedIds((prev) => {
@@ -188,7 +193,7 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
               </div>
 
               {isTyping ? (
-                <TypingMessage text={msg.content} onComplete={() => handleTypingComplete(msg.id)} />
+                <TypingMessage messageId={msg.id} text={msg.content} onComplete={() => handleTypingComplete(msg.id)} />
               ) : (
                 <p className="text-[13.5px] text-hive-sub leading-[1.75] whitespace-pre-wrap">
                   {msg.content}
