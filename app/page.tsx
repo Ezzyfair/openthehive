@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import LiveHivePulse from '@/components/LiveHivePulse';
 
 export default function Home() {
   return (
@@ -48,6 +49,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      <LiveHivePulse />
 
       {/* HOW IT WORKS */}
       <section className="max-w-[1080px] mx-auto px-6 py-20">
