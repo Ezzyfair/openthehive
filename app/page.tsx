@@ -23,7 +23,7 @@ async function getLiveCounts() {
 
 // Skill count is computed from the vault — single source of truth
 const SKILL_COUNT = 51;
-const SOUL_COUNT = 8;
+const SOUL_COUNT = 14;
 
 const souls = [
   { emoji: '📚', name: 'The Scholar', desc: 'Research. Depth. Verification.', color: '#3B82F6' },
