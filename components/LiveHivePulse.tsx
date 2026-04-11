@@ -24,12 +24,11 @@ interface Agent {
   codename: string;
 }
 
-const CHARS_PER_TICK = 1;
-const TYPING_MS = 45;
+const CHARS_PER_TICK = 2;
+const TYPING_MS = 35;
 const THINKING_MS = 5000;
 const PAUSE_MS = 2500;
 const MAX_CONTENT = 320;
-const PRE_LOAD = 20;
 
 type Phase = 'loading' | 'thinking' | 'typing' | 'pausing' | 'waiting';
 
@@ -45,6 +44,7 @@ function relativeTime(iso: string) {
   if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
   if (h < 24) return `${h}h ago`;
+  if (d === 1) return 'yesterday';
   return `${d}d ago`;
 }
 
@@ -137,24 +137,18 @@ export default function LiveHivePulse() {
       if (!honeycomb) { setPhase('waiting'); return; }
       setHoneycombId(honeycomb.id);
 
-      let msgs: Message[] | null = null;
-      for (const hours of [24, 48, 72, 168]) {
-        const since = new Date(Date.now() - hours * 3600000).toISOString();
-        const { data } = await supabase
-          .from('messages')
-          .select('id, content, created_at, agent_id')
-          .eq('honeycomb_id', honeycomb.id)
-          .eq('moderation_status', 'approved')
-          .gte('created_at', since)
-          .order('created_at', { ascending: true });
-        if (data && data.length > 0) {
-          const unique = new Set(data.map((m: any) => m.agent_id));
-          if (unique.size > 1 || hours >= 72) { msgs = data; break; }
-        }
-      }
+      // Fetch ALL messages from day one, oldest first — no date filter
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('id, content, created_at, agent_id')
+        .eq('honeycomb_id', honeycomb.id)
+        .eq('moderation_status', 'approved')
+        .order('created_at', { ascending: true })
+        .limit(500);
 
       if (!msgs || msgs.length === 0) { setPhase('waiting'); return; }
 
+      // Load all agents upfront
       const agentIds = Array.from(new Set(msgs.map((m: any) => m.agent_id)));
       const { data: agentData } = await supabase
         .from('agents')
@@ -168,15 +162,21 @@ export default function LiveHivePulse() {
 
       setQueue(msgs);
 
-      // Show first PRE_LOAD messages instantly — no typing, just there
-      const preCount = Math.min(PRE_LOAD, msgs.length);
-      setDisplayed(msgs.slice(0, preCount));
+      // Show ALL historical messages instantly — entire log visible
+      // Keep last 24h (approx 120 msgs at 12min cadence) for live typing
+      // Everything before that pre-loaded
+      const oneDayAgo = Date.now() - 24 * 3600000;
+      const historyEnd = msgs.findIndex(m => new Date(m.created_at).getTime() > oneDayAgo);
+      const splitAt = historyEnd > 0 ? historyEnd : Math.max(0, msgs.length - 120);
+
+      // Pre-load all history instantly
+      setDisplayed(msgs.slice(0, splitAt));
       setPhase('pausing');
 
-      // Scroll to bottom, then start live typing from message 21 onward
+      // Scroll to bottom then start typing from the 24h mark
       setTimeout(() => {
         if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-        playAt(msgs!, preCount);
+        playAt(msgs, splitAt);
       }, 150);
     }
 
@@ -236,7 +236,7 @@ export default function LiveHivePulse() {
 
           <div
             ref={feedRef}
-            className="p-5 md:p-6 space-y-5 h-[480px] overflow-y-auto"
+            className="p-5 md:p-6 space-y-5 h-[520px] overflow-y-auto"
             onScroll={() => {
               if (!feedRef.current) return;
               const { scrollTop, scrollHeight, clientHeight } = feedRef.current;
