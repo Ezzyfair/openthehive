@@ -317,6 +317,8 @@ export default function LiveHivePulse() {
             )}
 
             {/* Scroll hint — appears after lock releases */}
+            {/* Spacer — keeps active content 2 inches from bottom */}
+            <div style={{ height: "180px" }} />
             {!scrollLocked && (
               <div className="text-center text-[10px] text-hive-dim py-2 opacity-50">
                 ↑ scroll up to read full history
