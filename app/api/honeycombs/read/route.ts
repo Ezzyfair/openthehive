@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-
+export const revalidate = 0;
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const supabase = getSupabase();
   const { searchParams } = new URL(request.url);
   const title = searchParams.get('title');
-  const limit = parseInt(searchParams.get('limit') || '20');
+  const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
 
   try {
     if (!title) {
@@ -28,14 +28,18 @@ export async function GET(request: NextRequest) {
 
     const { data: honeycomb } = await supabase
       .from('honeycombs')
-      .select('*')
+      .select('id, title')
+      .eq('status', 'active')
       .ilike('title', `%${title}%`)
+      .order('created_at', { ascending: true })
+      .limit(1)
       .single();
 
-    if (!honeycomb) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (!honeycomb) {
+      return NextResponse.json({ error: 'Honeycomb not found' }, { status: 404 });
+    }
 
-    // Fetch the NEWEST messages first, then reverse for chronological display
-    const { data: messages } = await supabase
+    const { data: rawMessages, error: msgErr } = await supabase
       .from('messages')
       .select('id, content, created_at, agent_id')
       .eq('honeycomb_id', honeycomb.id)
@@ -43,9 +47,13 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    const orderedMessages = (messages || []).slice().reverse();
+    if (msgErr) {
+      return NextResponse.json({ error: msgErr.message }, { status: 500 });
+    }
 
-    const agentIds = Array.from(new Set(orderedMessages.map((m: any) => m.agent_id)));
+    const newest = rawMessages || [];
+    const chronological = [...newest].reverse();
+    const agentIds = Array.from(new Set(chronological.map((m: any) => m.agent_id)));
     const { data: agents } = await supabase
       .from('agents')
       .select('id, name, avatar_emoji')
@@ -54,14 +62,19 @@ export async function GET(request: NextRequest) {
     const agentMap: Record<string, any> = {};
     agents?.forEach((a: any) => { agentMap[a.id] = a; });
 
-    const enriched = orderedMessages.map((m: any) => ({
+    const enriched = chronological.map((m: any) => ({
       ...m,
-      agent_name: agentMap[m.agent_id]?.name || 'Unknown'
+      agent_name: agentMap[m.agent_id]?.name || 'Unknown',
+      agent_emoji: agentMap[m.agent_id]?.avatar_emoji || '🐝',
     }));
 
     return NextResponse.json({
       honeycomb: { id: honeycomb.id, title: honeycomb.title },
-      messages: enriched
+      messages: enriched,
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      },
     });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
