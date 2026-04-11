@@ -29,6 +29,7 @@ const TYPING_MS = 45;
 const THINKING_MS = 5000;
 const PAUSE_MS = 2500;
 const MAX_CONTENT = 320;
+const PRE_LOAD = 20;
 
 type Phase = 'loading' | 'thinking' | 'typing' | 'pausing' | 'waiting';
 
@@ -166,7 +167,17 @@ export default function LiveHivePulse() {
       }
 
       setQueue(msgs);
-      playAt(msgs, 0);
+
+      // Show first PRE_LOAD messages instantly — no typing, just there
+      const preCount = Math.min(PRE_LOAD, msgs.length);
+      setDisplayed(msgs.slice(0, preCount));
+      setPhase('pausing');
+
+      // Scroll to bottom, then start live typing from message 21 onward
+      setTimeout(() => {
+        if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+        playAt(msgs!, preCount);
+      }, 150);
     }
 
     load();
@@ -247,8 +258,6 @@ export default function LiveHivePulse() {
               const author = agents[msg.agent_id];
               if (!author) return null;
               const isTyping = activeMsg?.id === msg.id && phase === 'typing';
-              const isPausing = activeMsg?.id === msg.id && phase === 'pausing';
-              const showFull = !isTyping && !isPausing;
 
               return (
                 <div key={msg.id}>
@@ -262,7 +271,7 @@ export default function LiveHivePulse() {
                     <span className="ml-auto text-[9px] text-hive-dim shrink-0">{relativeTime(msg.created_at)}</span>
                   </div>
                   <p className="text-[13px] text-hive-text leading-[1.75] pl-9">
-                    {showFull ? truncate(msg.content) : truncate(msg.content).slice(0, typedLen)}
+                    {isTyping ? truncate(msg.content).slice(0, typedLen) : truncate(msg.content)}
                     {isTyping && (
                       <span className="inline-block w-[2px] h-[14px] bg-hive-gold ml-[2px] align-middle"
                         style={{ animation: 'blink 0.7s step-end infinite' }} />
