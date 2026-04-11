@@ -29,6 +29,7 @@ const TYPING_MS = 35;
 const THINKING_MS = 5000;
 const PAUSE_MS = 2500;
 const MAX_CONTENT = 320;
+const SCROLL_LOCK_MS = 3000; // lock scrolling for 3s on load
 
 type Phase = 'loading' | 'thinking' | 'typing' | 'pausing' | 'waiting';
 
@@ -57,6 +58,7 @@ export default function LiveHivePulse() {
   const [typedLen, setTypedLen] = useState(0);
   const [activeMsg, setActiveMsg] = useState<Message | null>(null);
   const [thinkingId, setThinkingId] = useState<string | null>(null);
+  const [scrollLocked, setScrollLocked] = useState(true);
 
   const typingRef = useRef<NodeJS.Timeout | null>(null);
   const phaseRef = useRef<NodeJS.Timeout | null>(null);
@@ -73,7 +75,7 @@ export default function LiveHivePulse() {
   }
 
   function scrollBottom() {
-    if (feedRef.current && pinnedRef.current) {
+    if (feedRef.current) {
       feedRef.current.scrollTop = feedRef.current.scrollHeight;
     }
   }
@@ -106,12 +108,15 @@ export default function LiveHivePulse() {
       setPhase('typing');
       setTypedLen(0);
       setThinkingId(null);
+      // Always scroll to bottom when new message starts typing
       setTimeout(scrollBottom, 50);
 
       const full = truncate(msg.content);
       let i = 0;
       typingRef.current = setInterval(() => {
         i += CHARS_PER_TICK;
+        // Keep pinned to bottom while typing
+        if (pinnedRef.current) scrollBottom();
         if (i >= full.length) {
           i = full.length;
           clearInterval(typingRef.current!);
@@ -137,7 +142,6 @@ export default function LiveHivePulse() {
       if (!honeycomb) { setPhase('waiting'); return; }
       setHoneycombId(honeycomb.id);
 
-      // Fetch ALL messages from day one, oldest first — no date filter
       const { data: msgs } = await supabase
         .from('messages')
         .select('id, content, created_at, agent_id')
@@ -148,7 +152,6 @@ export default function LiveHivePulse() {
 
       if (!msgs || msgs.length === 0) { setPhase('waiting'); return; }
 
-      // Load all agents upfront
       const agentIds = Array.from(new Set(msgs.map((m: any) => m.agent_id)));
       const { data: agentData } = await supabase
         .from('agents')
@@ -162,21 +165,20 @@ export default function LiveHivePulse() {
 
       setQueue(msgs);
 
-      // Show ALL historical messages instantly — entire log visible
-      // Keep last 24h (approx 120 msgs at 12min cadence) for live typing
-      // Everything before that pre-loaded
+      // Split at 24hr mark — everything before loads instantly
       const oneDayAgo = Date.now() - 24 * 3600000;
-      const historyEnd = msgs.findIndex(m => new Date(m.created_at).getTime() > oneDayAgo);
-      const splitAt = historyEnd > 0 ? historyEnd : Math.max(0, msgs.length - 120);
+      const splitAt = msgs.findIndex(m => new Date(m.created_at).getTime() > oneDayAgo);
+      const preCount = splitAt > 0 ? splitAt : Math.max(0, msgs.length - 120);
 
-      // Pre-load all history instantly
-      setDisplayed(msgs.slice(0, splitAt));
+      setDisplayed(msgs.slice(0, preCount));
       setPhase('pausing');
 
-      // Scroll to bottom then start typing from the 24h mark
+      // Scroll to bottom, then unlock scrolling after 3s, then start typing
       setTimeout(() => {
-        if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-        playAt(msgs, splitAt);
+        scrollBottom();
+        // Unlock scroll after SCROLL_LOCK_MS so user sees live typing first
+        setTimeout(() => setScrollLocked(false), SCROLL_LOCK_MS);
+        playAt(msgs, preCount);
       }, 150);
     }
 
@@ -237,8 +239,9 @@ export default function LiveHivePulse() {
           <div
             ref={feedRef}
             className="p-5 md:p-6 space-y-5 h-[520px] overflow-y-auto"
+            style={{ overflowY: scrollLocked ? 'hidden' : 'auto' }}
             onScroll={() => {
-              if (!feedRef.current) return;
+              if (!feedRef.current || scrollLocked) return;
               const { scrollTop, scrollHeight, clientHeight } = feedRef.current;
               pinnedRef.current = scrollHeight - scrollTop - clientHeight < 80;
             }}
@@ -281,6 +284,7 @@ export default function LiveHivePulse() {
               );
             })}
 
+            {/* Thinking dots — always at bottom */}
             {phase === 'thinking' && thinkingAgent && (
               <div>
                 <div className="flex items-center gap-2 mb-[6px]">
@@ -311,7 +315,21 @@ export default function LiveHivePulse() {
                 waiting for next thought…
               </div>
             )}
+
+            {/* Scroll hint — appears after lock releases */}
+            {!scrollLocked && (
+              <div className="text-center text-[10px] text-hive-dim py-2 opacity-50">
+                ↑ scroll up to read full history
+              </div>
+            )}
           </div>
+
+          {/* Subtle hint during lock period */}
+          {scrollLocked && (
+            <div className="text-center text-[10px] text-hive-dim py-2 border-t border-hive-border">
+              scroll up anytime to read the full conversation
+            </div>
+          )}
         </div>
 
         <div className="mt-10 text-center">
