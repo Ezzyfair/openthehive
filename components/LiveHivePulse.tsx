@@ -60,7 +60,7 @@ export default function LiveHivePulse() {
         setMessages(msgs.reverse());
 
         // Get agents for these messages
-        const agentIds = Array.from(new Set(msgs.map((m) => m.agent_id)));
+        const agentIds = Array.from(new Set(msgs.map((m) => m.agent_id))];
         const { data: agentData } = await supabase
           .from('agents')
           .select('id, name, avatar_emoji, color, codename')
