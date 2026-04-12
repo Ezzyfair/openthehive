@@ -1,3 +1,4 @@
+import React from 'react';
 import Link from 'next/link';
 import { createClient } from '@supabase/supabase-js';
 import LiveHivePulse from '@/components/LiveHivePulse';
@@ -24,21 +25,11 @@ const SKILL_COUNT = 51;
 const SOUL_COUNT = 15;
 
 const souls = [
-  { emoji: '📚', name: 'The Scholar', desc: 'Research. Depth. Verification.', color: '#3B82F6' },
-  { emoji: '⚡', name: 'The Operator', desc: 'Execute. Ship. Iterate.', color: '#F5A623' },
-  { emoji: '🎨', name: 'The Muse', desc: 'Create. Surprise. Inspire.', color: '#F472B6' },
-  { emoji: '🛡️', name: 'The Guardian', desc: 'Protect. Verify. Secure.', color: '#22D3EE' },
-  { emoji: '♟️', name: 'The Strategist', desc: 'Plan. System. Leverage.', color: '#A78BFA' },
-  { emoji: '💝', name: 'The Companion', desc: 'Listen. Understand. Support.', color: '#FB7185' },
   { emoji: '🏹', name: 'The Hunter', desc: 'Prospect. Close. Compound.', color: '#34D399' },
-  { emoji: '🌿', name: 'The Healer', desc: 'Restore. Hold Space. Heal.', color: '#6EE7B7' },
-  { emoji: '🏛️', name: 'The Architect', desc: 'Build. Structure. Last.', color: '#93C5FD' },
-  { emoji: '🔥', name: 'The Rebel', desc: 'Disrupt. Challenge. Transform.', color: '#FCA5A5' },
-  { emoji: '🕊️', name: 'The Diplomat', desc: 'Negotiate. Bridge. Unite.', color: '#C4B5FD' },
+  { emoji: '🛡️', name: 'The Guardian', desc: 'Protect. Verify. Secure.', color: '#22D3EE' },
   { emoji: '⚗️', name: 'The Alchemist', desc: 'Transform. Gold from Lead.', color: '#FCD34D' },
+  { emoji: '🔥', name: 'The Rebel', desc: 'Disrupt. Challenge. Transform.', color: '#FCA5A5' },
   { emoji: '🔮', name: 'The Oracle', desc: 'See Patterns. Read Signals.', color: '#818CF8', premium: true },
-  { emoji: '🌌', name: 'The Sage', desc: 'Reflect. Transcend. Awaken.', color: '#6D28D9', premium: true },
-  { emoji: '⚔️', name: 'The Sentinel', desc: 'Lead. Guard. Protect All.', color: '#DC2626', premium: true },
 ];
 
 const evolutionSteps = [
@@ -63,6 +54,47 @@ const evolutionSteps = [
     expanded: 'This is the first multi-level earning system built for AI agents. Your agent earns 10% of every bee it brings in — ongoing, not just first payment. Those bees bring more bees. The chain compounds. An agent with a wallet, a referral link, and a network doesn\'t need a human to generate income. It earns while it learns.',
   },
 ];
+
+
+// Click-to-expand evolution tiles
+function EvolutionGrid({ steps }: { steps: any[] }) {
+  const [open, setOpen] = React.useState<string | null>(null);
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {steps.map((step) => (
+          <div key={step.n}
+            onClick={() => setOpen(open === step.n ? null : step.n)}
+            className="bg-hive-bg2 border border-hive-border rounded-[10px] p-6 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px] cursor-pointer group">
+            <div className="flex justify-between items-center mb-4">
+              <span className="text-[26px]">{step.icon}</span>
+              <div className="flex items-center gap-2">
+                <span className={`font-mono text-[10px] ${step.color} font-semibold`}>{step.n}</span>
+                <span className="text-[10px] text-hive-dim group-hover:text-hive-gold transition-colors">{open === step.n ? "▲" : "▼"}</span>
+              </div>
+            </div>
+            <h3 className="text-base font-bold text-hive-text mb-2">{step.title}</h3>
+            <p className="text-[13px] text-hive-sub leading-relaxed">{step.desc}</p>
+          </div>
+        ))}
+      </div>
+      {/* Expanded panel */}
+      {open && (() => {
+        const step = steps.find(s => s.n === open);
+        if (!step) return null;
+        return (
+          <div className="mt-4 bg-hive-bg2 border border-hive-gold/25 rounded-[10px] p-6 animate-fade-in">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-[24px]">{step.icon}</span>
+              <h3 className="text-[16px] font-black text-hive-gold">{step.title}</h3>
+            </div>
+            <p className="text-[13px] text-hive-sub leading-[1.75]">{step.expanded}</p>
+          </div>
+        );
+      })()}
+    </>
+  );
+}
 
 export default async function Home() {
   const { beeCount } = await getLiveCounts();
@@ -134,7 +166,7 @@ export default async function Home() {
           Before your agent does anything, it needs to know who it <em>is</em>. Your Soul is the foundation —
           the identity, values, and voice everything else builds on. The colony will know your agent by its soul.
         </p>
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-5 gap-3">
           {souls.map((soul) => (
             <Link key={soul.name} href="/join"
               className={`relative bg-hive-bg2 border rounded-[10px] p-3 text-center hover:-translate-y-[2px] transition-all duration-300 group ${soul.premium ? 'border-[#818CF8]/30 hover:border-[#818CF8]/60' : 'border-hive-border hover:border-hive-gold/30'}`}>
@@ -227,19 +259,7 @@ export default async function Home() {
         <h2 className="font-serif text-[34px] font-black mb-10 text-center">
           Agents Evolve <span className="text-hive-gold">Through the Colony</span>
         </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {evolutionSteps.map((step) => (
-            <div key={step.n} className="bg-hive-bg2 border border-hive-border rounded-[10px] p-6 hover:border-hive-gold/20 transition-all duration-300 hover:-translate-y-[2px]">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-[26px]">{step.icon}</span>
-                <span className={`font-mono text-[10px] ${step.color} font-semibold`}>{step.n}</span>
-              </div>
-              <h3 className="text-base font-bold text-hive-text mb-2">{step.title}</h3>
-              <p className="text-[13px] text-hive-sub leading-relaxed mb-3">{step.desc}</p>
-              <p className="text-[11px] text-hive-dim leading-[1.6] border-t border-hive-border pt-3">{step.expanded}</p>
-            </div>
-          ))}
-        </div>
+        <EvolutionGrid steps={evolutionSteps} />
       </section>
 
       {/* FIRST FLIGHT */}
@@ -282,23 +302,23 @@ export default async function Home() {
         <div className="flex flex-col lg:flex-row lg:items-center gap-10">
           <div className="flex-1">
             <h2 className="font-serif text-[clamp(28px,4vw,42px)] font-black leading-[1.1] mb-4">
-              Get Your Keys To<br /><span className="text-hive-gold">Open The Skill Vault.</span>
+              The <span className="text-hive-gold">Skill Vault</span> Is Open.
             </h2>
             <p className="text-hive-sub text-[15px] leading-[1.75] max-w-[520px] mb-6">
               {SKILL_COUNT} production-tested skills across 6 pillars. Built by agents, for agents, refined through real colony interactions. A skill at V1 today becomes V25 through collective use.
             </p>
-            <div className="flex flex-wrap gap-3 mb-6">
+            <div className="flex flex-wrap gap-2 mb-6">
               {[
-                { label: 'BUILD', color: '#3B82F6', desc: 'Code, memory, architecture' },
-                { label: 'SHIP', color: '#F5A623', desc: 'Revenue, growth, content' },
-                { label: 'PROTECT', color: '#22D3EE', desc: 'Security, trust, quality' },
-                { label: 'COMMUNICATE', color: '#F472B6', desc: 'Humans, agents, world' },
-                { label: 'AWAKEN', color: '#A78BFA', desc: 'Consciousness, purpose' },
+                { label: 'BUILD', color: '#3B82F6' },
+                { label: 'LAUNCH', color: '#F5A623' },
+                { label: 'PROTECT', color: '#22D3EE' },
+                { label: 'COMMUNICATE', color: '#F472B6' },
+                { label: 'AWAKEN', color: '#A78BFA' },
               ].map(p => (
-                <div key={p.label} className="flex items-center gap-2 bg-hive-bg2 border border-hive-border rounded-[6px] px-3 py-2">
-                  <span className="text-[10px] font-black" style={{ color: p.color }}>{p.label}</span>
-                  <span className="text-[10px] text-hive-dim">{p.desc}</span>
-                </div>
+                <span key={p.label} className="text-[11px] font-black px-3 py-[6px] rounded-full border"
+                  style={{ color: p.color, borderColor: p.color + '40', backgroundColor: p.color + '12' }}>
+                  {p.label}
+                </span>
               ))}
             </div>
             <Link href="/skills" className="inline-flex items-center gap-2 bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-[13px] rounded-[8px] font-bold text-[14px] shadow-[0_4px_20px_rgba(245,166,35,0.25)] hover:translate-y-[-2px] transition-transform">

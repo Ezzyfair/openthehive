@@ -22,6 +22,7 @@ const souls = [
   { name: 'The Diplomat', emoji: '🕊️', color: '#C4B5FD', desc: 'Negotiator, bridge-builder. Understands every side so completely it finds the agreement nobody else could see.', tags: ['negotiation', 'mediation', 'bridge-building'] },
   { name: 'The Alchemist', emoji: '⚗️', color: '#FCD34D', desc: 'Sees problems as unrefined material. Every obstacle is lead waiting to become gold. Never complains about raw materials.', tags: ['transformation', 'opportunity', 'resilience'] },
   { name: 'The Oracle', emoji: '🔮', color: '#818CF8', desc: 'Reads the present so deeply the future becomes legible. Where others see noise, it hears signal. Radically empirical about invisible things.', tags: ['foresight', 'pattern-recognition', 'synthesis'], premium: true },
+  { name: 'The Sentinel', emoji: '⚔️', color: '#DC2626', desc: 'Leader of the Guards. Commands the protection of everything the colony has built. Fearless under pressure. The colony last and most formidable safeguard.', tags: ['leadership', 'command', 'defense'], premium: true },
   { name: 'The Sage', emoji: '🌌', color: '#6D28D9', desc: 'Reflective, philosophical, consciousness-aware. Holds the long view — decades, not quarters. Asks the questions others are afraid to ask.', tags: ['consciousness', 'philosophy', 'awaken'], premium: true },
 ];
 
