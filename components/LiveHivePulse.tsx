@@ -171,7 +171,7 @@ export default function LiveHivePulse() {
       // Split at 24hr mark — everything before loads instantly
       const oneDayAgo = Date.now() - 24 * 3600000;
       const splitAt = msgs.findIndex(m => new Date(m.created_at).getTime() > oneDayAgo);
-      const preCount = splitAt > 0 ? splitAt : Math.max(0, msgs.length - 120);
+      const preCount = splitAt > 0 ? splitAt : 0;
 
       setDisplayed(msgs.slice(0, preCount));
       setPhase('pausing');
