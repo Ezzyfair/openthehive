@@ -146,7 +146,7 @@ export default function HoneycombsClient({ initialHoneycombs }: { initialHoneyco
           return (
             <Link
               key={hc.id}
-              href={`/honeycombs/${encodeURIComponent(hc.title)}`}
+              href={`/honeycombs/${hc.id}`}
               className={`block bg-hive-bg2 rounded-[12px] p-5 transition-all duration-300 hover:-translate-y-[2px] group ${
                 live
                   ? 'border-2 border-hive-green/40 hover:border-hive-green/70 shadow-[0_0_20px_rgba(52,211,153,0.06)]'
