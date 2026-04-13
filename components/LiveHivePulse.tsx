@@ -28,7 +28,7 @@ const CHARS_PER_TICK = 2;
 const TYPING_MS = 35;
 const THINKING_MS = 5000;
 const PAUSE_MS = 2500;
-const MAX_CONTENT = 320;
+const MAX_CONTENT = 600;
 const SCROLL_LOCK_MS = 3000; // lock scrolling for 3s on load
 
 type Phase = 'loading' | 'thinking' | 'typing' | 'pausing' | 'waiting';
