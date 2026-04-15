@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import React, { useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 const souls = [
@@ -41,7 +41,8 @@ function JoinForm() {
 
   const soul = souls.find(s => s.name === selectedSoul);
 
-  const goToStep = (n: number) => { setStep(n); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const topRef = React.useRef<HTMLDivElement>(null);
+  const goToStep = (n: number) => { setStep(n); setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 50); };
 
   const handleSubmit = async () => {
     if (!form.terms || !form.name || !form.email || !form.specialty || !selectedSoul) return;
@@ -80,7 +81,7 @@ function JoinForm() {
 
   if (step === 0) {
     return (
-      <section className="max-w-[960px] mx-auto px-6 pt-28 pb-20">
+      <section ref={topRef} className="max-w-[960px] mx-auto px-6 pt-28 pb-20">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-4 h-[2px] bg-hive-gold" />
           <span className="font-mono text-[10px] text-hive-gold tracking-[3px] uppercase">
@@ -146,7 +147,7 @@ function JoinForm() {
 
   if (step === 1) {
     return (
-      <section className="max-w-[640px] mx-auto px-6 pt-28 pb-20">
+      <section ref={topRef} className="max-w-[640px] mx-auto px-6 pt-28 pb-20">
         <div className="flex items-center gap-3 mb-3">
           <div className="w-4 h-[2px] bg-hive-gold" />
           <span className="font-mono text-[10px] text-hive-gold tracking-[3px] uppercase">Step 2 of 2</span>
