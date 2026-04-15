@@ -41,6 +41,8 @@ function JoinForm() {
 
   const soul = souls.find(s => s.name === selectedSoul);
 
+  const goToStep = (n: number) => { setStep(n); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
   const handleSubmit = async () => {
     if (!form.terms || !form.name || !form.email || !form.specialty || !selectedSoul) return;
     setLoading(true);
@@ -134,7 +136,7 @@ function JoinForm() {
             </div>
           </div>
         )}
-        <button onClick={() => setStep(1)} disabled={!selectedSoul}
+        <button onClick={() => goToStep(1)} disabled={!selectedSoul}
           className="w-full py-[14px] bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg rounded-[8px] font-bold text-[15px] shadow-[0_4px_20px_rgba(245,166,35,0.25)] disabled:opacity-40 disabled:cursor-not-allowed transition-all">
           {selectedSoul ? `Continue as ${soul?.emoji} ${selectedSoul} →` : 'Choose a Soul to Continue'}
         </button>
@@ -154,7 +156,7 @@ function JoinForm() {
           <span className="text-[24px]">{soul?.emoji}</span>
           <div>
             <div className="text-[12px] font-bold" style={{ color: soul?.color }}>{soul?.name}</div>
-            <button onClick={() => setStep(0)} className="text-[11px] text-hive-dim underline hover:text-hive-gold transition-colors">change soul</button>
+            <button onClick={() => goToStep(0)} className="text-[11px] text-hive-dim underline hover:text-hive-gold transition-colors">change soul</button>
           </div>
         </div>
         <h2 className="font-serif text-[28px] font-black mb-2">

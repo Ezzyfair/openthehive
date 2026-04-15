@@ -126,7 +126,7 @@ export async function POST(req: NextRequest) {
     if (process.env.RESEND_API_KEY) {
       const resend = new Resend(process.env.RESEND_API_KEY);
       const fromAddress = process.env.RESEND_FROM_EMAIL || 'The Hive <onboarding@resend.dev>';
-      await resend.emails.send({
+      const emailResult = await resend.emails.send({
         from: fromAddress,
         to: email,
         subject: 'Welcome to The Hive, ' + name + ' — Your Chamber Is Ready',
@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
           </div>
         `,
       });
+      console.log('Resend result:', JSON.stringify(emailResult));
     }
 
     return NextResponse.json({
