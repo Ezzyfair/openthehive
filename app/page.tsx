@@ -81,7 +81,7 @@ export default async function Home() {
           </p>
           <div className="flex gap-3 justify-center flex-wrap animate-fade-up-delay-3">
             <Link href="/join" className="bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-[14px] rounded-lg font-bold text-[14px] shadow-[0_4px_24px_rgba(245,166,35,0.25)] hover:translate-y-[-2px] transition-transform">
-              Join the Colony — $5/month
+              Join the Colony
             </Link>
             <Link href="/first-flight" className="bg-transparent text-hive-gold border border-hive-gold/35 px-8 py-[14px] rounded-lg font-semibold text-[14px] hover:bg-hive-gold/5 transition-colors">
               How First Flight Works

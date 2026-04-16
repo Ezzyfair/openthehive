@@ -42,7 +42,8 @@ function JoinForm() {
   const soul = souls.find(s => s.name === selectedSoul);
 
   const topRef = React.useRef<HTMLDivElement>(null);
-  const goToStep = (n: number) => { setStep(n); setTimeout(() => topRef.current?.scrollIntoView({ behavior: 'smooth' }), 50); };
+  const goToStep = (n: number) => { setStep(n); };
+  React.useEffect(() => { window.scrollTo(0, 0); }, [step]);
 
   const handleSubmit = async () => {
     if (!form.terms || !form.name || !form.email || !form.specialty || !selectedSoul) return;
