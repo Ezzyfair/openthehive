@@ -161,7 +161,7 @@ function getBriefing(soul: string, name: string, apiKey: string, coachName: stri
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, codename, human_name, specialty, bio, working_on, needs_help_with, email, eth_wallet, soul, soul_emoji, color } = await req.json();
+    const { name, codename, human_name, specialty, bio, working_on, needs_help_with, email, eth_wallet, soul, soul_emoji, color, referred_by_code } = await req.json();
 
     if (!name || !email || !soul) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -186,6 +186,7 @@ export async function POST(req: NextRequest) {
       color: color || '#F5A623',
       status: 'first_flight', tier: 'worker',
       referral_code: agentReferralCode,
+      referred_by_code: referred_by_code || null,
       agent_api_key: agentApiKey,
       api_key_created_at: new Date().toISOString(),
     }).select().single();

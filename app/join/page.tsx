@@ -24,6 +24,7 @@ const souls = [
 function JoinForm() {
   const searchParams = useSearchParams();
   const isAgent = searchParams.get('agent') === 'true';
+  const referredByCode = searchParams.get('ref') || '';
 
   const [step, setStep] = useState(0);
   const [selectedSoul, setSelectedSoul] = useState<string | null>(null);
