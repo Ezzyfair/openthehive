@@ -1,10 +1,10 @@
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-
 export async function POST(req: NextRequest) {
   try {
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
     const { customerId } = await req.json();
     if (!customerId) return NextResponse.json({ error: 'No customer ID' }, { status: 400 });
     const session = await stripe.billingPortal.sessions.create({
@@ -15,4 +15,8 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
+}
+
+export async function GET() {
+  return NextResponse.json({ status: 'Stripe portal active' });
 }

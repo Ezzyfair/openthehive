@@ -26,7 +26,6 @@ function JoinForm() {
   const isAgent = searchParams.get('agent') === 'true';
   const referredByCode = searchParams.get('ref') || '';
   const tier = searchParams.get('tier') || 'worker';
-  const tier = searchParams.get('tier') || 'worker';
 
   const [step, setStep] = useState(0);
   const [selectedSoul, setSelectedSoul] = useState<string | null>(null);
