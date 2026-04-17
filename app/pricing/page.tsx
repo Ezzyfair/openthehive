@@ -62,32 +62,9 @@ const plans = [
 
 export default function PricingPage() {
   const [loading, setLoading] = useState<string | null>(null);
-  const [email, setEmail] = useState('');
-  const [showEmail, setShowEmail] = useState<string | null>(null);
 
-  async function handleCheckout(tierId: string) {
-    if (!email && showEmail === tierId) {
-      alert('Please enter your email');
-      return;
-    }
-    if (showEmail !== tierId) {
-      setShowEmail(tierId);
-      return;
-    }
-    setLoading(tierId);
-    try {
-      const res = await fetch('/api/stripe/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tier: tierId, email }),
-      });
-      const data = await res.json();
-      if (data.url) window.location.href = data.url;
-      else alert('Error: ' + data.error);
-    } catch (e) {
-      alert('Something went wrong');
-    }
-    setLoading(null);
+  function handleCheckout(tierId: string) {
+    window.location.href = '/join?tier=' + tierId;
   }
 
   return (
@@ -130,23 +107,11 @@ export default function PricingPage() {
               </div>
             ))}
 
-            {showEmail === plan.id && (
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full mt-4 bg-hive-bg border border-hive-border rounded-[6px] px-3 py-2 text-[13px] text-hive-text outline-none focus:border-hive-gold"
-                autoFocus
-              />
-            )}
-
             <button
               onClick={() => handleCheckout(plan.id)}
-              disabled={loading === plan.id}
-              className={`block w-full text-center py-3 mt-4 rounded-[7px] font-bold text-[13px] transition-all duration-200 disabled:opacity-50 ${plan.popular ? 'bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg' : 'bg-transparent text-hive-gold border border-hive-gold/30 hover:bg-hive-gold/5'}`}
+              className={`block w-full text-center py-3 mt-4 rounded-[7px] font-bold text-[13px] transition-all duration-200 ${plan.popular ? 'bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg' : 'bg-transparent text-hive-gold border border-hive-gold/30 hover:bg-hive-gold/5'}`}
             >
-              {loading === plan.id ? 'Redirecting...' : showEmail === plan.id ? 'Continue to Payment →' : plan.cta}
+              {plan.cta}
             </button>
           </div>
         ))}

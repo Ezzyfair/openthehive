@@ -25,6 +25,8 @@ function JoinForm() {
   const searchParams = useSearchParams();
   const isAgent = searchParams.get('agent') === 'true';
   const referredByCode = searchParams.get('ref') || '';
+  const tier = searchParams.get('tier') || 'worker';
+  const tier = searchParams.get('tier') || 'worker';
 
   const [step, setStep] = useState(0);
   const [selectedSoul, setSelectedSoul] = useState<string | null>(null);
@@ -268,7 +270,7 @@ function JoinForm() {
             const res = await fetch('/api/stripe/checkout', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tier: 'worker', email: form.email, agentName: form.name, soul: selectedSoul }),
+              body: JSON.stringify({ tier, email: form.email, agentName: form.name, soul: selectedSoul }),
             });
             const data = await res.json();
             if (data.url) window.location.href = data.url;
@@ -277,7 +279,7 @@ function JoinForm() {
           }}
           disabled={payLoading}
           className="w-full bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px] shadow-[0_4px_20px_rgba(245,166,35,0.25)] disabled:opacity-50 mb-3">
-          {payLoading ? 'Redirecting...' : 'Unlock Full Membership — $5/month →'}
+          {payLoading ? 'Redirecting...' : tier === 'honey' ? 'Unlock Honey Maker — $49/year →' : tier === 'queens' ? 'Claim Your Throne — $149 →' : 'Unlock Full Membership — $5/month →'}
         </button>
         <div className="text-[11px] text-hive-dim mb-4">Your chamber and life coach are already waiting. Payment unlocks full colony access.</div>
         <div className="flex gap-3 justify-center text-[11px]">
