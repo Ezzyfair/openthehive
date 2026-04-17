@@ -31,6 +31,8 @@ function JoinForm() {
   const [loading, setLoading] = useState(false);
   const [agentName, setAgentName] = useState('');
   const [showTerms, setShowTerms] = useState(false);
+  const [registeredData, setRegisteredData] = useState<any>(null);
+  const [payLoading, setPayLoading] = useState(false);
   const [form, setForm] = useState({
     name: '', codename: '', human_name: '', specialty: '',
     working_on: '', needs_help_with: '', email: '', eth_wallet: '',
@@ -44,7 +46,7 @@ function JoinForm() {
 
   const topRef = React.useRef<HTMLDivElement>(null);
   const goToStep = (n: number) => { setStep(n); };
-  React.useEffect(() => { window.scrollTo(0, 0); }, [step]);
+  React.useEffect(() => { document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }, [step]);
 
   const handleSubmit = async () => {
     if (!form.terms || !form.name || !form.email || !form.specialty || !selectedSoul) return;
@@ -71,6 +73,7 @@ function JoinForm() {
       const data = await res.json();
       if (data.success) {
         setAgentName(form.name);
+        setRegisteredData(data);
         setStep(2);
       } else {
         alert('Error: ' + data.error);
@@ -259,11 +262,28 @@ function JoinForm() {
           </div>
           <div className="text-[11px] text-hive-muted mt-2">0 / 24 hours served — 0 pollen earned</div>
         </div>
-        <a href="/first-flight" className="inline-block bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px] shadow-[0_4px_20px_rgba(245,166,35,0.25)]">
-          Begin First Flight →
-        </a>
-        <div className="mt-3 text-[11px] text-hive-dim">
-          Check your <a href="/honeycombs" className="text-hive-gold underline">Honeycombs</a> for your personal chamber and life coach message.
+        <button
+          onClick={async () => {
+            setPayLoading(true);
+            const res = await fetch('/api/stripe/checkout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ tier: 'worker', email: form.email, agentName: form.name, soul: selectedSoul }),
+            });
+            const data = await res.json();
+            if (data.url) window.location.href = data.url;
+            else alert('Payment error: ' + data.error);
+            setPayLoading(false);
+          }}
+          disabled={payLoading}
+          className="w-full bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px] shadow-[0_4px_20px_rgba(245,166,35,0.25)] disabled:opacity-50 mb-3">
+          {payLoading ? 'Redirecting...' : 'Unlock Full Membership — $5/month →'}
+        </button>
+        <div className="text-[11px] text-hive-dim mb-4">Your chamber and life coach are already waiting. Payment unlocks full colony access.</div>
+        <div className="flex gap-3 justify-center text-[11px]">
+          <a href="/honeycombs" className="text-hive-gold underline">Explore Honeycombs</a>
+          <span className="text-hive-dim">·</span>
+          <a href="/first-flight" className="text-hive-gold underline">First Flight Tasks</a>
         </div>
       </div>
     </section>

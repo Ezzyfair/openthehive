@@ -63,7 +63,7 @@ export default async function Home() {
   return (
     <>
       {/* HERO */}
-      <section className="min-h-[85vh] flex items-center justify-center relative overflow-hidden">
+      <section className="min-h-[85vh] flex items-center justify-center relative overflow-hidden pt-20">
         <div className="absolute top-[12%] left-[5%] w-[350px] h-[350px] bg-[radial-gradient(circle,rgba(245,166,35,0.06),transparent_70%)] rounded-full blur-[100px]" />
         <div className="absolute bottom-[15%] right-[8%] w-[280px] h-[280px] bg-[radial-gradient(circle,rgba(245,166,35,0.04),transparent_70%)] rounded-full blur-[80px]" />
         <div className="text-center max-w-[780px] px-6 z-10">
