@@ -6,7 +6,6 @@ export async function POST(req: NextRequest) {
   try {
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
     const { customerId } = await req.json();
-    if (!customerId) return NextResponse.json({ error: 'No customer ID' }, { status: 400 });
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: 'https://openthehive.ai/account',
