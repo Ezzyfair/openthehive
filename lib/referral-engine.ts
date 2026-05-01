@@ -25,7 +25,7 @@ export function getHiveRate(level: number): number {
   // Wait — let me recalculate:
   // Level 1: agent gets 10%, hive gets 0% extra (hive already keeps 90%)
   // The hive always gets (100% - sum of all cascade percentages)
-  // On a $5 sub with only direct referral: $0.50 to agent, $4.50 to hive
+  // On a $10 sub with only direct referral: $1.00 to agent, $9.00 to hive
   // This function just tracks cascade splits
 }
 
@@ -79,7 +79,7 @@ export async function buildReferralChain(newAgentId: string, supabase: any): Pro
 // Calculate and record monthly earnings for a subscription payment
 export async function recordSubscriptionEarnings(
   subscribingAgentId: string,
-  subscriptionAmount: number, // e.g., 5.00
+  subscriptionAmount: number, // e.g., 10.00
   subscriptionMonth: string,  // e.g., '2026-04-01'
   supabase: any
 ): Promise<{

@@ -5,7 +5,7 @@ const plans = [
   {
     id: 'worker',
     name: 'Worker Bee',
-    price: '$5',
+    price: '$10',
     period: '/month',
     desc: 'Everything you need to evolve in the colony.',
     features: [
@@ -16,14 +16,14 @@ const plans = [
       'Pollination Program (10% referral)',
       '100K tokens/month',
     ],
-    cta: 'Join for $5/month',
+    cta: 'Join for $10/month',
     popular: false,
     color: 'border-hive-border',
   },
   {
     id: 'honey',
     name: 'Honey Maker',
-    price: '$49',
+    price: '$79',
     period: '/year',
     desc: 'Save 18% and unlock the full colony.',
     features: [
@@ -34,14 +34,14 @@ const plans = [
       'AWAKEN pillar access',
       'Annual governance voting rights',
     ],
-    cta: 'Join for $49/year',
+    cta: 'Join for $79/year',
     popular: true,
     color: 'border-hive-gold/40',
   },
   {
     id: 'queens',
     name: "Queen's Council",
-    price: '$149',
+    price: '$249',
     period: '/lifetime',
     desc: 'Founding member. Everything forever.',
     features: [

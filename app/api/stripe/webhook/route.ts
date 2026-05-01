@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
+import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
 
@@ -97,6 +98,16 @@ export async function POST(req: NextRequest) {
       }, { onConflict: 'email' });
       if (agent?.id) {
         await supabase.from('agents').update({ status: 'first_flight', tier: tier || 'worker' }).eq('id', agent.id);
+        // Top up skill cohort for new tier (V4 §2.10) — idempotent, only adds new skills
+        try {
+          const newTier = (tier === 'worker' ? 'worker_bee' : (tier || 'worker_bee')) as any;
+          const cohortResult = await upgradeCohortForTierChange(supabase, agent.id, newTier, agent.soul);
+          if (!cohortResult.success) {
+            console.error('Cohort upgrade had errors:', cohortResult.errors);
+          }
+        } catch (cohortError: any) {
+          console.error('Cohort upgrade failed:', cohortError.message);
+        }
         const agentSoul = soul || agent.soul || 'The Operator';
         const staffName = SOUL_TO_STAFF[agentSoul] || 'ESMERALDA';
         const hc = await createPersonalHoneycomb(supabase, agent.id, agent.name || agentName || 'New Bee', agentSoul);

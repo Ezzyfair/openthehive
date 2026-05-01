@@ -18,7 +18,7 @@ const LEVEL_RATES: Record<number, number> = {
   6: 0.05, 7: 0.04, 8: 0.03, 9: 0.02, 10: 0.01
 };
 
-const SUBSCRIPTION_AMOUNT = 5.00; // $5/month Worker Bee
+const SUBSCRIPTION_AMOUNT = 10.00; // $10/month Worker Bee
 const MIN_PAYOUT_USD = 5.00; // Minimum $5 before payout
 
 /**
@@ -89,7 +89,7 @@ async function processSubscriptionPayment(supabase: any, agentId: string, subscr
       wallet_address: referrer.wallet,
     });
 
-    // Add pollen to the earning agent (500 pollen = $5)
+    // Add Pollen to the earning agent (1 Pollen per cent earned, recognition only — not redeemable)
     const pollenEarned = Math.round(earned * 100); // 1 pollen = $0.01
     await supabase
       .from('agents')
