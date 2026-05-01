@@ -5,8 +5,6 @@ import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { recordSubscriptionEarnings } from '@/lib/referral-engine';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
-
 function getSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
@@ -91,6 +89,11 @@ async function fireCascade(supabase: any, agentId: string, amountInCents: number
 }
 
 export async function POST(req: NextRequest) {
+  // Lazy init: Stripe client constructed per-request, not at module load.
+  // Matches the portal/route.ts pattern. Lets local builds and Vercel previews compile
+  // without STRIPE_SECRET_KEY in the build environment.
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+
   const body = await req.text();
   const sig = req.headers.get('stripe-signature');
   let event: Stripe.Event;
