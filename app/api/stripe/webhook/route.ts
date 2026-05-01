@@ -3,13 +3,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
+import { recordSubscriptionEarnings } from '@/lib/referral-engine';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
 
 function getSupabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string
+    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
   );
 }
 
@@ -62,6 +63,33 @@ async function postWelcome(supabase: any, honeycombId: string, agentName: string
   }).eq('id', honeycombId);
 }
 
+/**
+ * Helper: fire the cascade for a paid subscription event.
+ * Idempotency is handled inside recordSubscriptionEarnings by (source_agent_id, subscription_month).
+ */
+async function fireCascade(supabase: any, agentId: string, amountInCents: number) {
+  if (!agentId || !amountInCents || amountInCents <= 0) return;
+  const amountDollars = amountInCents / 100;
+  const month = new Date().toISOString().slice(0, 7) + '-01';
+  try {
+    const result = await recordSubscriptionEarnings(agentId, amountDollars, month, supabase);
+    if (result.skipped) {
+      console.log('Cascade skipped (idempotent):', { agentId, amountDollars, month, reason: result.reason });
+    } else {
+      console.log('Cascade fired:', {
+        agentId,
+        amountDollars,
+        month,
+        chainDepth: result.chain.length,
+        totalPaidOut: result.totalPaidOut,
+        hiveKept: result.hiveKept,
+      });
+    }
+  } catch (cascadeError: any) {
+    console.error('Cascade failed:', { agentId, amountDollars, month, error: cascadeError.message });
+  }
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.text();
   const sig = req.headers.get('stripe-signature');
@@ -78,8 +106,12 @@ export async function POST(req: NextRequest) {
     const session = event.data.object as Stripe.Checkout.Session;
     const { tier, agentName, soul } = session.metadata || {};
     const email = session.customer_email || session.customer_details?.email;
+
+    let agentRecord: any = null;
+
     if (email) {
       const { data: agent } = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
+      agentRecord = agent;
       const referralCode = (agentName || 'BEE').toUpperCase().replace(/\s/g, '') + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
       const walletExpiry = new Date();
       walletExpiry.setDate(walletExpiry.getDate() + 90);
@@ -96,6 +128,7 @@ export async function POST(req: NextRequest) {
         subscription_started_at: new Date().toISOString(),
         wallet_expires_at: walletExpiry.toISOString(),
       }, { onConflict: 'email' });
+
       if (agent?.id) {
         await supabase.from('agents').update({ status: 'first_flight', tier: tier || 'worker' }).eq('id', agent.id);
         // Top up skill cohort for new tier (V4 §2.10) — idempotent, only adds new skills
@@ -112,6 +145,35 @@ export async function POST(req: NextRequest) {
         const staffName = SOUL_TO_STAFF[agentSoul] || 'ESMERALDA';
         const hc = await createPersonalHoneycomb(supabase, agent.id, agent.name || agentName || 'New Bee', agentSoul);
         if (hc) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
+      }
+    }
+
+    // Fire cascade ONLY for one-time payments here (mode='payment', e.g., Queen's Council lifetime).
+    // For subscriptions (mode='subscription'), the first invoice will trigger via invoice.payment_succeeded
+    // — firing here would double-cascade.
+    if (session.mode === 'payment' && agentRecord?.id) {
+      await fireCascade(supabase, agentRecord.id, session.amount_total ?? 0);
+    }
+  }
+
+  // NEW: invoice.payment_succeeded — fires for every paid subscription invoice
+  // (initial signup AND every renewal). Canonical cascade trigger for recurring
+  // tiers (Worker Bee monthly $10, Honey Maker annual $79).
+  if (event.type === 'invoice.payment_succeeded') {
+    const invoice = event.data.object as Stripe.Invoice;
+    const customerId = invoice.customer as string;
+
+    if (customerId) {
+      const { data: member } = await supabase
+        .from('members')
+        .select('agent_id')
+        .eq('stripe_customer_id', customerId)
+        .single();
+
+      if (member?.agent_id) {
+        await fireCascade(supabase, member.agent_id, invoice.amount_paid ?? 0);
+      } else {
+        console.warn('invoice.payment_succeeded: no member found for customer', customerId);
       }
     }
   }
