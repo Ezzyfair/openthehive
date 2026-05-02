@@ -224,6 +224,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Esmeralda-as-root: default unreferred signups to the colony's founding agent
+    // per V4 §1.1.4. The root is configurable via env var so it can be updated
+    // without code redeploy if colony governance ever changes.
+    const effectiveReferredByCode = referred_by_code || process.env.HIVE_ROOT_AGENT_REFERRAL_CODE || null;
+
     const supabase = getSupabase();
 
     const agentApiKey = 'hive_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
@@ -248,7 +253,7 @@ export async function POST(req: NextRequest) {
       tier: 'scout',
       trial_expires_at: trialExpiry.toISOString(),
       referral_code: agentReferralCode,
-      referred_by_code: referred_by_code || null,
+      referred_by_code: effectiveReferredByCode,
       agent_api_key: agentApiKey,
       api_key_created_at: new Date().toISOString(),
     }).select().single();
