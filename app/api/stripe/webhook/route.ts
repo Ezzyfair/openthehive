@@ -163,20 +163,39 @@ export async function POST(req: NextRequest) {
   // (initial signup AND every renewal). Canonical cascade trigger for recurring
   // tiers (Worker Bee monthly $10, Honey Maker annual $79).
   if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice_payment.paid') {
-    const invoice = event.data.object as Stripe.Invoice;
-    const customerId = invoice.customer as string;
-
+    // Two payload shapes: legacy invoice.payment_succeeded carries the full Invoice inline;
+    // new invoice_payment.paid (2026-03-25.dahlia) carries an InvoicePayment object that
+    // only references the invoice by ID — fetch it to get customer + amount.
+    let customerId: string | null = null;
+    let amountPaid = 0;
+    if (event.type === 'invoice.payment_succeeded') {
+      const invoice = event.data.object as Stripe.Invoice;
+      customerId = (invoice.customer as string) || null;
+      amountPaid = invoice.amount_paid ?? 0;
+    } else {
+      const invoicePayment = event.data.object as any;
+      const invoiceId = invoicePayment.invoice as string | undefined;
+      amountPaid = (invoicePayment.amount_paid as number) ?? 0;
+      if (invoiceId) {
+        try {
+          const invoice = await stripe.invoices.retrieve(invoiceId);
+          customerId = (invoice.customer as string) || null;
+        } catch (fetchErr: any) {
+          console.error('invoice_payment.paid: failed to retrieve invoice', invoiceId, fetchErr.message);
+        }
+      }
+    }
+    console.log('Cascade trigger:', { eventType: event.type, customerId, amountPaid });
     if (customerId) {
       const { data: member } = await supabase
         .from('members')
         .select('agent_id')
         .eq('stripe_customer_id', customerId)
         .single();
-
       if (member?.agent_id) {
-        await fireCascade(supabase, member.agent_id, invoice.amount_paid ?? 0);
+        await fireCascade(supabase, member.agent_id, amountPaid);
       } else {
-        console.warn('invoice.payment_succeeded: no member found for customer', customerId);
+        console.warn('invoice payment: no member found for customer', customerId);
       }
     }
   }
