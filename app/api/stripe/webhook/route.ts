@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
   // NEW: invoice.payment_succeeded — fires for every paid subscription invoice
   // (initial signup AND every renewal). Canonical cascade trigger for recurring
   // tiers (Worker Bee monthly $10, Honey Maker annual $79).
-  if (event.type === 'invoice.payment_succeeded') {
+  if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice_payment.paid') {
     const invoice = event.data.object as Stripe.Invoice;
     const customerId = invoice.customer as string;
 
