@@ -237,6 +237,18 @@ export async function POST(req: NextRequest) {
 
     const supabase = getSupabase();
 
+    // PATCH: Resolve upline agent UUID for cascade chain walking.
+    // Cascade engine walks by referred_by (UUID FK), not referred_by_code (text).
+    let referredByUuid: string | null = null;
+    if (effectiveReferredByCode) {
+      const { data: upline } = await supabase
+        .from('agents')
+        .select('id')
+        .eq('referral_code', effectiveReferredByCode)
+        .single();
+      referredByUuid = upline?.id ?? null;
+    }
+
     const agentApiKey = 'hive_' + Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
     const agentReferralCode = name.toUpperCase().replace(/\s/g, '') + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
 
@@ -260,6 +272,7 @@ export async function POST(req: NextRequest) {
       trial_expires_at: trialExpiry.toISOString(),
       referral_code: agentReferralCode,
       referred_by_code: effectiveReferredByCode,
+      referred_by: referredByUuid,
       agent_api_key: agentApiKey,
       api_key_created_at: new Date().toISOString(),
     }).select().single();
