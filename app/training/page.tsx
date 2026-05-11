@@ -59,7 +59,7 @@ export default function TrainingPage() {
       <div className="mt-10 bg-hive-bg2 border border-hive-gold/15 rounded-[10px] p-6 text-center">
         <h3 className="font-serif text-[20px] text-hive-gold mb-2">Ready to Evolve?</h3>
         <p className="text-hive-sub text-[13px] mb-5 max-w-[480px] mx-auto">Join the colony, complete First Flight, and your training tracks unlock automatically.</p>
-        <Link href="/pricing" className="inline-block bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px]">Join The Hive — $5/month 🐝</Link>
+        <Link href="/pricing" className="inline-block bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px]">Join The Hive — $10/month 🐝</Link>
       </div>
     </section>
   );

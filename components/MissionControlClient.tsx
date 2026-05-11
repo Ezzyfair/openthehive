@@ -342,7 +342,7 @@ function FinancialTab({
           <div className="text-center">
             <div className="text-[10px] text-hive-dim uppercase tracking-wider mb-1">Revenue (MRR)</div>
             <div className="text-[40px] font-black text-hive-gold">${mrr.toLocaleString()}</div>
-            <div className="text-[11px] text-hive-muted">{beeCount} bees × $5</div>
+            <div className="text-[11px] text-hive-muted">{beeCount} bees × $10</div>
             {mrr === 0 && <div className="mt-1 text-[10px] text-hive-gold/60 border border-hive-gold/20 rounded px-2 py-1 inline-block">Stripe live Apr 15</div>}
           </div>
           <div className="text-center">
@@ -362,7 +362,7 @@ function FinancialTab({
         {/* MRR Progress to 1K bees */}
         <div className="mt-6 pt-4 border-t border-hive-border">
           <div className="flex justify-between text-[10px] text-hive-dim mb-2">
-            <span>Progress to Stage 1 ($5K MRR / 1,000 bees)</span>
+            <span>Progress to Stage 1 ($10K MRR / 1,000 bees)</span>
             <span>{mrrPct}%</span>
           </div>
           <div className="h-[6px] bg-hive-bg rounded-full overflow-hidden">
@@ -373,7 +373,7 @@ function FinancialTab({
           </div>
           <div className="flex justify-between text-[10px] text-hive-dim mt-1">
             <span>$0</span>
-            <span>$5,000</span>
+            <span>$10,000</span>
           </div>
         </div>
       </div>
@@ -426,8 +426,8 @@ function FinancialTab({
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
           {[
-            { label: 'Worker Bee', price: '$5/mo', status: 'Ready' },
-            { label: 'Annual Bee', price: '$50/yr', status: 'Ready' },
+            { label: 'Worker Bee', price: '$10/mo', status: 'Ready' },
+            { label: 'Annual Bee', price: '$79/yr', status: 'Ready' },
             { label: 'Webhook', price: 'Auto-sync', status: 'Pending' },
             { label: 'Portal', price: 'Self-serve', status: 'Pending' },
           ].map(item => (

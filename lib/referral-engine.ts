@@ -1,5 +1,23 @@
-// Referral Chain Engine
-// Calculates and records earnings for the full 10-level cascade
+/**
+ * lib/referral-engine.ts — The Hive 10-level referral cascade engine
+ *
+ * Single source of truth for cascade calculations. Used by:
+ *   - /api/referrals (GET dashboard, POST cascade trigger — legacy)
+ *   - /api/referrals/chain (GET chain, POST process_payment + run_monthly_payouts)
+ *   - /api/stripe/webhook (cascade trigger on paid invoice + one-time checkout)
+ *
+ * V4 §1.1: Cascade distributes 55% of every paid subscription across 10 levels
+ *   (10/9/8/7/6/5/4/3/2/1%). Hive retains the remainder minus Stripe fees.
+ *
+ * V4 §2.3: This module does NOT touch Pollen. Pollen is recognition, earned via
+ *   outcome events (mastery verification, retention milestones, contributions),
+ *   tracked in pollen_transactions ledger (forthcoming). Cascade earnings are
+ *   real money, tracked in referral_earnings — never confused with Pollen.
+ *
+ * Tier-agnostic: caller passes the actual amount paid. Worker Bee monthly = $10.
+ *   Honey Maker annual = $79. Queen's Council lifetime = $249. Same 10-level
+ *   distribution applies to all.
+ */
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -19,15 +37,10 @@ export function getCommissionRate(level: number): number {
   return (11 - level) / 100; // Level 1 = 10%, Level 10 = 1%
 }
 
-export function getHiveRate(level: number): number {
-  if (level > 10) return 1.0; // Hive keeps 100% beyond level 10
-  return level / 100; // Level 1 = 0% to hive, Level 10 = 9% to hive
-  // Wait — let me recalculate:
-  // Level 1: agent gets 10%, hive gets 0% extra (hive already keeps 90%)
-  // The hive always gets (100% - sum of all cascade percentages)
-  // On a $5 sub with only direct referral: $0.50 to agent, $4.50 to hive
-  // This function just tracks cascade splits
-}
+// On a $10 sub with full 10-level cascade:
+//   Cascade pays out: 10+9+8+7+6+5+4+3+2+1 = 55% = $5.50
+//   Hive retains: 45% = $4.50 (minus Stripe fees ~$0.59)
+// On shallower chains (e.g., L1 only), the unused cascade percentages stay with the Hive.
 
 // Walk up the referral chain from a new agent
 // Returns array of {agentId, level, percentage} for all earners
@@ -76,28 +89,56 @@ export async function buildReferralChain(newAgentId: string, supabase: any): Pro
   return chain;
 }
 
-// Calculate and record monthly earnings for a subscription payment
+/**
+ * Calculate and record earnings for a subscription payment.
+ *
+ * Idempotency: skipped if (source_agent_id, subscription_month) tuple already
+ * has an earnings row. Prevents double-cascade on Stripe webhook retries.
+ * For one-time tiers (QC lifetime, Honey Maker annual), subscription_month is
+ * the calendar month the payment occurred — acceptable since duplicate one-time
+ * payments in the same month for the same agent aren't expected.
+ */
 export async function recordSubscriptionEarnings(
   subscribingAgentId: string,
-  subscriptionAmount: number, // e.g., 5.00
+  subscriptionAmount: number, // e.g., 10.00 (Worker Bee), 79.00 (Honey Maker), 249.00 (QC)
   subscriptionMonth: string,  // e.g., '2026-04-01'
   supabase: any
 ): Promise<{
   totalPaidOut: number;
   hiveKept: number;
   chain: Array<{ name: string; level: number; amount: number }>;
+  skipped?: boolean;
+  reason?: string;
 }> {
+  // Idempotency: skip if cascade already fired for this agent in this month
+  const { data: existing } = await supabase
+    .from('referral_earnings')
+    .select('id')
+    .eq('source_agent_id', subscribingAgentId)
+    .eq('subscription_month', subscriptionMonth)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    return {
+      totalPaidOut: 0,
+      hiveKept: 0,
+      chain: [],
+      skipped: true,
+      reason: 'duplicate_month',
+    };
+  }
+
   const chain = await buildReferralChain(subscribingAgentId, supabase);
 
   let totalPaidOut = 0;
   const earnings = [];
+  const earningsRows = [];
 
   for (const earner of chain) {
-    const earnedAmount = subscriptionAmount * earner.percentage;
+    const earnedAmount = Math.round(subscriptionAmount * earner.percentage * 100) / 100;
     totalPaidOut += earnedAmount;
 
-    // Record earning
-    await supabase.from('referral_earnings').insert({
+    earningsRows.push({
       earning_agent_id: earner.agentId,
       source_agent_id: subscribingAgentId,
       subscription_month: subscriptionMonth,
@@ -116,7 +157,11 @@ export async function recordSubscriptionEarnings(
     });
   }
 
-  const hiveKept = subscriptionAmount - totalPaidOut;
+  if (earningsRows.length > 0) {
+    await supabase.from('referral_earnings').insert(earningsRows);
+  }
+
+  const hiveKept = Math.round((subscriptionAmount - totalPaidOut) * 100) / 100;
 
   // Record hive revenue
   await supabase.from('hive_revenue').insert({

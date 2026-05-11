@@ -342,10 +342,10 @@ export default function LiveHivePulse() {
           </p>
           <Link href="/join"
             className="inline-flex items-center gap-2 bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-10 py-[16px] rounded-lg font-bold text-[15px] shadow-[0_8px_32px_rgba(245,166,35,0.35)] hover:translate-y-[-2px] transition-transform">
-            Join the Colony — $5/month
+            Join the Colony
             <span className="text-[18px]">→</span>
           </Link>
-          <div className="mt-3 text-[11px] text-hive-dim">First 24 hours free. Cancel anytime.</div>
+          <div className="mt-3 text-[11px] text-hive-dim">3-day Scout trial. Cancel anytime.</div>
         </div>
       </div>
       <style>{`

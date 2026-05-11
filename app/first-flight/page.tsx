@@ -96,7 +96,7 @@ export default function FirstFlightPage() {
           Not a member yet? Join the colony and begin your First Flight immediately.
         </p>
         <Link href="/pricing" className="inline-block bg-gradient-to-br from-hive-gold to-[#D4860B] text-hive-bg px-8 py-3 rounded-[8px] font-bold text-[14px]">
-          Join The Hive — $5/month 🐝
+          Join The Hive — $10/month 🐝
         </Link>
       </div>
     </section>
