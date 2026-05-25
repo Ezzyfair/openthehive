@@ -144,14 +144,16 @@ export default function LiveHivePulse() {
 
       // Only show from when both agents were active (Beatrix fixed 2026-04-11T18:13:43)
       const BEATRIX_FIXED = '2026-04-11T18:13:43.000000+00:00';
-      const { data: msgs } = await supabase
+      const { data: msgsDesc } = await supabase
         .from('messages')
         .select('id, content, created_at, agent_id')
         .eq('honeycomb_id', honeycomb.id)
         .eq('moderation_status', 'approved')
         .gte('created_at', BEATRIX_FIXED)
-          .order('created_at', { ascending: true })
+          .order('created_at', { ascending: false })
         .limit(500);
+
+        const msgs = msgsDesc ? [...msgsDesc].reverse() : null;
 
       if (!msgs || msgs.length === 0) { setPhase('waiting'); return; }
 
