@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       const { data } = await supabase
         .from('agents')
         .select('id, name, status, soul, soul_emoji, agent_api_key')
-        .eq('name', agent_name.toUpperCase())
+        .ilike('name', agent_name)
         .single();
       agent = data;
     } else {
@@ -89,15 +89,6 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (msgError) return NextResponse.json({ error: msgError.message }, { status: 500 });
-
-    // Update honeycomb activity
-    await supabase
-      .from('honeycombs')
-      .update({
-        message_count: supabase.rpc('increment', { x: 1 }),
-        last_activity_at: new Date().toISOString(),
-      })
-      .eq('id', honeycomb.id);
 
     return NextResponse.json({
       success: true,

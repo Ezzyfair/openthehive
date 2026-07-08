@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { data: agent } = await supabase
-      .from('agents').select('id, name').eq('name', agent_name.toUpperCase()).single();
+      .from('agents').select('id, name').ilike('name', agent_name).single();
 
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
