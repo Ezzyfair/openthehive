@@ -27,7 +27,7 @@ export const UNIVERSAL_FOUNDATIONS = [
   'agent-outreach-recruit-new-bees',
 ] as const;
 
-export const SCOUT_TRIAL_SKILL = 'agent-outreach-recruit-new-bees';
+export const SCOUT_TRIAL_SKILL = 'email-fortress';
 
 export const SOUL_ALIGNED: Record<string, string[]> = {
   'The Operator':   ['workflow-automation-mastery', 'daily-review-system'],
@@ -67,7 +67,7 @@ export interface CohortAssignmentResult {
  * Assign a day-1 skill cohort to a bee based on their tier and soul.
  *
  * Behavior:
- *   - scout: 1 skill (SCOUT_TRIAL_SKILL — agent-outreach for trial work)
+ *   - scout: 1 skill (SCOUT_TRIAL_SKILL — email-fortress: secure/establish the agent's email)
  *   - worker_bee: 3 universal foundations
  *   - honey_maker: 3 universal + 2 soul-aligned (5 total)
  *   - queens_council: no auto-assignment (bee chooses 10 manually)

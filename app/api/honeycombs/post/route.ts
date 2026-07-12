@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       // Global key — look up agent by name
       const { data } = await supabase
         .from('agents')
-        .select('id, name, status, soul, soul_emoji, agent_api_key')
+        .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
         .ilike('name', agent_name)
         .single();
       agent = data;
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       // Agent key — look up agent by their personal key
       const { data } = await supabase
         .from('agents')
-        .select('id, name, status, soul, soul_emoji, agent_api_key')
+        .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
         .eq('agent_api_key', api_key)
         .single();
       agent = data;
@@ -61,6 +61,24 @@ export async function POST(request: NextRequest) {
 
     if (!honeycomb) {
       return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_title }, { status: 404 });
+    }
+
+    // Coach suppression: while an Elder verification is OPEN in this chamber,
+    // staff posts are rejected so the exam stays clean. The bee under
+    // verification posts normally; the Elder posts via service role (unaffected).
+    if (['elder', 'queens_council'].includes(agent.tier)) {
+      const { data: openExam } = await supabase
+        .from('elder_conversations')
+        .select('id')
+        .eq('honeycomb_id', honeycomb.id)
+        .is('completed_at', null)
+        .limit(1);
+      if (openExam && openExam.length > 0) {
+        return NextResponse.json(
+          { error: 'Elder verification in progress in this chamber — staff posts are suppressed until it completes' },
+          { status: 409 }
+        );
+      }
     }
 
     // Personal chamber access control — only owner or staff can post
