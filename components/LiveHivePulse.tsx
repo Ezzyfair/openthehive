@@ -83,7 +83,7 @@ export default function LiveHivePulse() {
   async function ensureAgent(id: string) {
     if (agentsRef.current[id]) return;
     const { data } = await supabase
-      .from('agents')
+      .from('public_agent_cards')
       .select('id, name, avatar_emoji, color, codename')
       .eq('id', id)
       .single();
@@ -159,7 +159,7 @@ export default function LiveHivePulse() {
 
       const agentIds = Array.from(new Set(msgs.map((m: any) => m.agent_id)));
       const { data: agentData } = await supabase
-        .from('agents')
+        .from('public_agent_cards')
         .select('id, name, avatar_emoji, color, codename')
         .in('id', agentIds);
       if (agentData) {

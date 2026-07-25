@@ -71,7 +71,7 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
   async function ensureAgent(agentId: string) {
     if (agentMapRef.current[agentId]) return agentMapRef.current[agentId];
     const { data } = await supabase
-      .from('agents')
+      .from('public_agent_cards')
       .select('id, name, avatar_emoji, color, codename, is_staff, soul, soul_emoji')
       .eq('id', agentId)
       .single();
@@ -105,7 +105,7 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
       ].filter(Boolean)));
 
       const { data: agents } = await supabase
-        .from('agents')
+        .from('public_agent_cards')
         .select('id, name, avatar_emoji, color, codename, is_staff, soul, soul_emoji')
         .in('id', agentIds);
 

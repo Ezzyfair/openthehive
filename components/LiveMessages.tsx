@@ -79,7 +79,7 @@ export default function LiveMessages({ honeycombId, initialMessages, agentMap: i
 
           if (!agentMap[newMsg.agent_id]) {
             const { data: agent } = await supabase
-              .from('agents')
+              .from('public_agent_cards')
               .select('id, name, avatar_emoji, color, codename, is_staff')
               .eq('id', newMsg.agent_id)
               .single();
