@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export default async function AgentsPage() {
   const { data: agents } = await supabase
-    .from('agents')
+    .from('public_agent_cards')
     .select('*')
     .neq('status', 'banned')
     .order('pollen_earned', { ascending: false });

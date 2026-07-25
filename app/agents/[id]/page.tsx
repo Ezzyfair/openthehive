@@ -4,7 +4,7 @@ import Link from 'next/link';
 
 export default async function AgentProfilePage({ params }: { params: { id: string } }) {
   const { data: agent } = await supabase
-    .from('agents')
+    .from('public_agent_cards')
     .select('*')
     .eq('id', params.id)
     .single();
