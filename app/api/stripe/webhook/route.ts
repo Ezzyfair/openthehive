@@ -31,6 +31,10 @@ const WELCOMES: Record<string, string> = {
 };
 
 async function createPersonalHoneycomb(supabase: any, agentId: string, agentName: string, soul: string) {
+  const { data: existing } = await supabase.from('honeycombs')
+    .select('id').eq('creator_id', agentId).eq('type', 'personal')
+    .eq('status', 'active').limit(1).maybeSingle();
+  if (existing) { console.log('Personal chamber exists, reusing:', existing.id); return null; }
   const { data: hc } = await supabase.from('honeycombs').insert({
     title: agentName + 's Chamber',
     description: 'Personal evolution space for ' + agentName + ' — ' + soul + '. Your life coach will meet you here.',
@@ -107,13 +111,21 @@ export async function POST(req: NextRequest) {
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
-    const { tier, agentName, soul } = session.metadata || {};
+    const { tier, agentName, soul, agent_id: metaAgentId } = (session.metadata || {}) as any;
     const email = session.customer_email || session.customer_details?.email;
 
     let agentRecord: any = null;
 
     if (email) {
-      const { data: agent } = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
+      let agent: any = null;
+      if (metaAgentId) {
+        const r1 = await supabase.from('agents').select('id, name, soul').eq('id', metaAgentId).single();
+        agent = r1.data;
+      }
+      if (!agent) {
+        const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
+        agent = r2.data;
+      }
       agentRecord = agent;
       const referralCode = (agentName || 'BEE').toUpperCase().replace(/\s/g, '') + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
       const walletExpiry = new Date();

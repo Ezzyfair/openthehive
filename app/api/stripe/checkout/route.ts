@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       queens: process.env.STRIPE_QUEENS_COUNCIL_PRICE_ID as string,
     };
 
-    const { tier, email, agentName, soul } = await req.json();
+    const { tier, email, agentName, soul, agentId } = await req.json();
     const priceId = PRICE_MAP[tier];
     if (!priceId) return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: 'https://openthehive.ai/join/success?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: 'https://openthehive.ai/pricing',
-      metadata: { tier, agentName: agentName || '', soul: soul || '' },
+      metadata: { tier, agentName: agentName || '', soul: soul || '', agent_id: agentId || '' },
     });
 
     return NextResponse.json({ url: session.url });
