@@ -114,7 +114,7 @@ export default async function SkillVaultPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {souls.map((soul) => (
-            <a key={soul.slug} href="/join"
+            <a key={soul.slug} href={`/join?soul=${soul.slug}`}
               className={`relative bg-hive-bg2 rounded-[12px] p-5 transition-all duration-300 hover:-translate-y-[2px] cursor-pointer group block ${
                 soul.featured
                   ? 'border-2 border-hive-gold/50 hover:border-hive-gold shadow-[0_0_40px_rgba(245,166,35,0.08)]'

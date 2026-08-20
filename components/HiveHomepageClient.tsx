@@ -99,7 +99,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           <span style={{ fontFamily:'Cinzel,serif', fontSize:'15px', letterSpacing:'0.18em', color:'var(--charcoal)', whiteSpace:'nowrap' }}>THE HIVE</span>
         </div>
         <div className="hive-nav-links">
-          {[['The Colony','#what'],['Souls','#souls'],['Skill Vault','#skills'],['AWAKEN','#awaken']].map(([l,h]) => (
+          {[['The Colony','#what'],['Souls','#souls'],['Skill Vault','/skills'],['AWAKEN','#awaken']].map(([l,h]) => (
             <a key={h} href={h} style={{ fontSize:'11px', letterSpacing:'0.12em', textTransform:'uppercase', color:'var(--muted)', textDecoration:'none', fontWeight:500 }}
                onMouseOver={e=>(e.currentTarget.style.color='var(--gold-mid)')}
                onMouseOut={e=>(e.currentTarget.style.color='var(--muted)')}>{l}</a>
@@ -126,7 +126,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         </p>
 
         {/* Bee + hex frame */}
-        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation:'bee-pulse 5s ease-in-out infinite' }}>
+        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation:'bee-pulse 5s ease-in-out infinite', cursor:'pointer' }}
+          onClick={() => { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); }}>
           <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 220 220">
             <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#E2C46A"/><stop offset="100%" stopColor="#7A5C10"/>
@@ -136,14 +137,12 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               <line key={i} x1={p1.split(',')[0]} y1={p1.split(',')[1]} x2={p2.split(',')[0]} y2={p2.split(',')[1]} stroke="#C9A84C" strokeWidth="2"/>
             ))}
           </svg>
-          <div style={{ position:'absolute', top:'50%', left:'50%', width:'85%', height:'85%', objectFit:'contain' }}>
+          <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:'85%', height:'85%' }}>
             <Image src="/hive-bee.webp" alt="The Hive" fill
               style={{ objectFit:'contain', mixBlendMode:'multiply',
                 filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
-                animation: beeHover ? 'bee-excited-once 0.9s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
-                cursor:'pointer', transition:'filter 0.2s' }}
-              onMouseEnter={() => setBeeHover(true)}
-              onMouseLeave={() => { setTimeout(() => setBeeHover(false), 950); }}
+                animation: beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
+                transition:'filter 0.2s' }}
             />
           </div>
         </div>
@@ -259,7 +258,9 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
                   <div style={{ fontFamily:'Cormorant Garamond,serif', fontStyle:'italic', fontSize:18, color:'var(--on-dark-dim)' }}>{activeSoul.tag}</div>
                 </div>
                 <div style={{ flex:1 }}>
-                  <div style={{ display:'flex', gap:10, flexWrap:'wrap', marginBottom:28 }}>
+                  <h3 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:28, color:'var(--on-dark)', fontWeight:300, marginBottom:12, lineHeight:1.2 }}>{activeSoul.name}</h3>
+                  <p style={{ fontSize:15, color:'var(--on-dark)', lineHeight:1.8, marginBottom:20, opacity:0.85 }}>{activeSoul.tag}</p>
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:24 }}>
                     {activeSoul.traits.map(t => (
                       <span key={t} style={{ fontFamily:'Cinzel,serif', fontSize:9, letterSpacing:'0.14em', color:'var(--gold-mid)', border:'1px solid rgba(201,168,76,0.3)', padding:'5px 14px', textTransform:'uppercase' }}>{t}</span>
                     ))}
