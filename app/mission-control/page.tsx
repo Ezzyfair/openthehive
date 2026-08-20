@@ -207,9 +207,9 @@ async function getStats() {
 
   // System health
   const beekeeperActive = (beekeeperRecentPosts || 0) > 0;
-  const watcherLastActive = watcherActivity.data?.[0]?.updated_at || null;
+  const watcherLastActive = watcherActivity?.data?.[0]?.updated_at || null;
   const watcherActive = watcherLastActive ? new Date(watcherLastActive) > new Date(now.getTime() - 60 * 60 * 1000) : false;
-  const dreamersLastPost = dreamersActivity.data?.[0]?.created_at || null;
+  const dreamersLastPost = dreamersActivity?.data?.[0]?.created_at || null;
   const dreamersActive = dreamersLastPost ? new Date(dreamersLastPost) > new Date(now.getTime() - 60 * 60 * 1000) : false;
 
   return {
