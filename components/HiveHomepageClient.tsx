@@ -138,14 +138,19 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               <line key={i} x1={p1.split(',')[0]} y1={p1.split(',')[1]} x2={p2.split(',')[0]} y2={p2.split(',')[1]} stroke="#C9A84C" strokeWidth="2"/>
             ))}
           </svg>
-          <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:224, height:224 }}>
-            <Image src="/hive-bee.webp" alt="The Hive" fill
-              style={{ objectFit:'contain', mixBlendMode:'multiply',
-                filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
-                animation: beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
-                transition:'filter 0.2s' }}
-            />
-          </div>
+          <Image
+            src="/hive-bee.webp" alt="The Hive"
+            width={220} height={220}
+            style={{
+              position:'absolute', top:'50%', left:'50%',
+              transform:'translate(-50%,-50%)',
+              objectFit:'contain', mixBlendMode:'multiply',
+              filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
+              animation: beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
+              transition:'filter 0.2s',
+              maxWidth:'90%', maxHeight:'90%'
+            }}
+          />
         </div>
 
         <h1 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(38px,8.5vw,100px)', fontWeight:300, lineHeight:1.02, letterSpacing:'-0.02em', color:'var(--charcoal)', marginBottom:10, position:'relative', wordBreak:'break-word', overflowWrap:'break-word', padding:'0 8px' }}>
