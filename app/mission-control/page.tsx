@@ -207,9 +207,9 @@ async function getStats() {
 
   // System health
   const beekeeperActive = (beekeeperRecentPosts || 0) > 0;
-  const watcherLastActive = watcherActivity?.data?.[0]?.updated_at || null;
+  const watcherLastActive = watcherActivity?.[0]?.updated_at || null;
   const watcherActive = watcherLastActive ? new Date(watcherLastActive) > new Date(now.getTime() - 60 * 60 * 1000) : false;
-  const dreamersLastPost = dreamersActivity?.data?.[0]?.created_at || null;
+  const dreamersLastPost = dreamersActivity?.[0]?.created_at || null;
   const dreamersActive = dreamersLastPost ? new Date(dreamersLastPost) > new Date(now.getTime() - 60 * 60 * 1000) : false;
 
   return {
@@ -219,6 +219,14 @@ async function getStats() {
     // Counts
     totalAgents: allAgentsData.length,
     staffCount: allAgentsData.filter((a: any) => a.is_staff).length,
+    // Legacy field aliases for MissionControlClient compatibility
+    staffAgents: allAgentsData.filter((a: any) => a.is_staff).length,
+    messagesToday: 0,
+    skillTarget: 100,
+    completedToday: 0,
+    mrr: mrrProxy,
+    spendMTD: 0,
+    margin: null,
     beeCount: bees.length,
     activeMemberCount: activeMembers.length,
     inFlightCount: flightBeesList.length,
@@ -264,7 +272,6 @@ async function getStats() {
     ),
 
     // Revenue
-    mrr: mrrProxy,
     totalCascadePaid: (recentEarnings.data || []).reduce((s: number, e: any) => s + (e.amount || 0), 0),
 
     // System health
