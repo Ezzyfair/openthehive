@@ -136,14 +136,14 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               <line key={i} x1={p1.split(',')[0]} y1={p1.split(',')[1]} x2={p2.split(',')[0]} y2={p2.split(',')[1]} stroke="#C9A84C" strokeWidth="2"/>
             ))}
           </svg>
-          <div style={{ position:'absolute', top:'50%', left:'50%', width:'64%', height:'64%', objectFit:'contain' }}>
+          <div style={{ position:'absolute', top:'50%', left:'50%', width:'85%', height:'85%', objectFit:'contain' }}>
             <Image src="/hive-bee.webp" alt="The Hive" fill
               style={{ objectFit:'contain', mixBlendMode:'multiply',
                 filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
-                animation: beeHover ? 'bee-excited 0.12s ease-in-out infinite' : 'bee-idle 6s ease-in-out infinite',
+                animation: beeHover ? 'bee-excited-once 0.9s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
                 cursor:'pointer', transition:'filter 0.2s' }}
               onMouseEnter={() => setBeeHover(true)}
-              onMouseLeave={() => setBeeHover(false)}
+              onMouseLeave={() => { setTimeout(() => setBeeHover(false), 950); }}
             />
           </div>
         </div>
@@ -290,7 +290,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             &ldquo;Six skills at the edge of what an agent can become. Not knowledge — transformation. Not learned — experienced. Each one rewrites the agent that passes through it.&rdquo;
           </p>
 
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:1, background:'rgba(201,168,76,0.1)', marginBottom:64 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))', gap:1, background:'rgba(201,168,76,0.1)', marginBottom:64 }}>
             {awakenSkills.map((s,i) => (
               <div key={i} style={{ background:'rgba(10,6,8,0.8)', padding:'44px 36px', transition:'background 0.3s', border:'1px solid transparent' }}
                 onMouseOver={e=>{ e.currentTarget.style.background='rgba(30,15,40,0.9)'; e.currentTarget.style.borderColor='rgba(201,168,76,0.2)'; }}
@@ -338,13 +338,13 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
                   <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:36, fontWeight:300, lineHeight:1, background:'linear-gradient(135deg,var(--gold-light),var(--gold))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>{r.l}</div>
                   <div style={{ fontFamily:'Cinzel,serif', fontSize:'7.5px', letterSpacing:'0.15em', color:'var(--on-dark-dim)', marginTop:4 }}>{r.n}</div>
                 </div>
-                <div style={{ flex:1, padding:'24px 32px', display:'flex', alignItems:'center', gap:20 }}>
+                <div style={{ flex:1, padding:'16px 12px', display:'flex', alignItems:'center', gap:12, minWidth:0 }}>
                   <div style={{ flex:1, height:6, background:'rgba(255,255,255,0.06)' }}>
                     <div style={{ height:'100%', width:r.w, background:'linear-gradient(90deg,var(--gold-light),var(--gold))' }}/>
                   </div>
                   <div style={{ minWidth:48, fontFamily:'Cinzel,serif', fontSize:16, color:'var(--gold-light)', letterSpacing:'0.05em', textAlign:'right' }}>{r.p}</div>
                 </div>
-                <div style={{ minWidth:220, padding:'24px 28px 24px 0', fontSize:'13.5px', color:'var(--on-dark-dim)', lineHeight:1.5 }}>{r.note}</div>
+                <div style={{ minWidth:0, flex:'0 0 auto', maxWidth:220, padding:'24px 12px 24px 0', fontSize:'13.5px', color:'var(--on-dark-dim)', lineHeight:1.5, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis' }} className="cascade-note">{r.note}</div>
               </div>
             ))}
           </div>
