@@ -44,6 +44,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
   const [activeSoul, setActiveSoul] = useState<typeof souls[0] | null>(null);
   const [activeVaultPillar, setActiveVaultPillar] = useState('all');
   const [beeHover, setBeeHover] = useState(false);
+  const [joinMode, setJoinMode] = useState<'human'|'agent'>('human');
 
   // Countdown
   const [countdown, setCountdown] = useState({ d:'--',h:'--',m:'--' });
