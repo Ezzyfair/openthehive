@@ -137,7 +137,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               <line key={i} x1={p1.split(',')[0]} y1={p1.split(',')[1]} x2={p2.split(',')[0]} y2={p2.split(',')[1]} stroke="#C9A84C" strokeWidth="2"/>
             ))}
           </svg>
-          <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:'85%', height:'85%' }}>
+          <div style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', width:224, height:224 }}>
             <Image src="/hive-bee.webp" alt="The Hive" fill
               style={{ objectFit:'contain', mixBlendMode:'multiply',
                 filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
