@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
+import ConfettiGraduation from '@/components/ConfettiGraduation';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,6 +39,7 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
   const [messages, setMessages] = useState<any[]>([]);
   const [agentMap, setAgentMap] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+  const [beeAgentId, setBeeAgentId] = useState<string | null>(null);
   const [typingMsgId, setTypingMsgId] = useState<string | null>(null);
   const [typedLen, setTypedLen] = useState(0);
   const typingRef = useRef<NodeJS.Timeout | null>(null);
@@ -89,6 +91,10 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
 
       if (!hc) { setLoading(false); return; }
       setHoneycomb(hc);
+      // For personal chambers (type='personal'), creator_id is the bee's agent_id
+      if (hc?.type === 'personal' && hc?.creator_id) {
+        setBeeAgentId(hc.creator_id);
+      }
 
       const { data: msgs } = await supabase
         .from('messages')
