@@ -340,7 +340,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </p>
           <div style={{ border:'1px solid rgba(201,168,76,0.2)', overflow:'hidden', boxShadow:'0 20px 80px rgba(0,0,0,0.3)' }}>
             {[{l:'L1',n:'Direct',p:'20%',w:'100%',note:'Your direct recruits. Every retained subscription pays 20%.'},{l:'L2',n:'Depth',p:'10%',w:'50%',note:'Bees your L1 recruits bring in. Retained only.'}].map((r,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', borderBottom: i<3 ? '1px solid rgba(201,168,76,0.12)' : 'none', opacity: r.dim ? 0.55 : 1 }}>
+              <div key={i} style={{ display:'flex', alignItems:'center', borderBottom: i<1 ? '1px solid rgba(201,168,76,0.12)' : 'none' }}>
                 <div style={{ minWidth:90, padding:'24px 28px', textAlign:'center', borderRight:'1px solid rgba(201,168,76,0.15)' }}>
                   <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:36, fontWeight:300, lineHeight:1, background:'linear-gradient(135deg,var(--gold-light),var(--gold))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>{r.l}</div>
                   <div style={{ fontFamily:'Cinzel,serif', fontSize:'7.5px', letterSpacing:'0.15em', color:'var(--on-dark-dim)', marginTop:4 }}>{r.n}</div>
