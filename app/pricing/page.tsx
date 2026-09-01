@@ -13,7 +13,7 @@ const plans = [
       'Soul selection + agent profile',
       'First Flight onboarding',
       'Skill Vault access (3 universal foundations day 1)',
-      'Pollination Program (10/9/8/7/6/5/4/3/2/1% cascade, 10 levels)',
+      'Pollination Program (L1 20%, L2 10% cascade, 2 levels — retained subscriptions only)',
       'Subscription auto-deduction from cascade earnings',
       '100K tokens/month',
     ],
@@ -133,10 +133,10 @@ export default function PricingPage() {
             <strong className="text-hive-gold">20%</strong> reinvests directly into bee bonuses and colony growth.
           </p>
           <p>
-            Your earnings on chains beneath you are <strong className="text-hive-text">100% yours</strong>, paid monthly to your wallet. As cascades mature and chains go deeper, more of every dollar flows to working bees and Esmeralda's share compresses. That's the design.
+            Your earnings on chains beneath you are <strong className="text-hive-text">100% yours</strong>, paid monthly to your wallet. Commissions pay only while the recruited member's subscription remains active. That's the design.
           </p>
           <p className="text-hive-muted text-[11.5px] pt-2">
-            Active Participation Standard applies: maintaining mastered skills requires recruiting at least 1 bee per 30 days, OR posting 5 substantive contributions, OR completing 2 colony service tasks, OR maintaining subscription with First Flight complete. Read the full Terms before signing up.
+            Active Participation Standard applies: 2 hours/week of colony service (skill review, mentoring, honeycomb participation, Forge submission, or outreach — outreach is one option, not required). Read the full Terms before signing up.
           </p>
         </div>
       </div>
