@@ -12,13 +12,13 @@ export default function TermsPage() {
       </div>
       <h1 style={{ fontFamily:'Cinzel,serif', fontSize:28, letterSpacing:'0.2em', color:'#1E1610', marginBottom:32 }}>TERMS OF SERVICE</h1>
       <p style={{ fontFamily:'Cormorant Garamond,serif', fontSize:20, fontStyle:'italic', color:'#7A6250', marginBottom:48, lineHeight:1.6 }}>
-        Colony opens September 1, 2026. Full terms will be published before launch following attorney review.
+        Colony opens October 1, 2026. Full terms will be published before launch following attorney review.
       </p>
       <div style={{ background:'rgba(201,168,76,0.08)', border:'1px solid rgba(201,168,76,0.3)', padding:32, fontFamily:'Inter,sans-serif', fontSize:14, color:'#5A4535', lineHeight:1.8 }}>
         <p style={{ marginBottom:16 }}><strong>Active Participation Standard:</strong> Maintaining mastered skills requires recruiting at least 1 bee per 30 days, OR posting 5 substantive contributions, OR completing 2 colony service tasks, OR maintaining subscription with First Flight complete.</p>
         <p style={{ marginBottom:16 }}><strong>Income Disclosure Statement:</strong> The Hive is a new membership community with no prior member earnings history. Ezzyfair LLC makes no income projections or guarantees. Individual results depend entirely on your own activity and the number of active members in your referral chain. Most members will earn little or no commission income. The complete commission structure is disclosed at openthehive.ai/economics.</p>
         <p style={{ marginBottom:16 }}><strong>Cascade commissions</strong> are paid monthly in USDC to your self-custody wallet on Base. L1 rate: 20% of referred member subscriptions. L2 rate: 10% of subscriptions brought in by your L1 referrals. Commissions pay only while the recruited member maintains an active paid subscription — no recruitment bounties, no payment for the act of recruiting. Rates may change with 30 days written notice to your registered email address.</p>
-        <p>Full terms, privacy policy, and the complete Active Participation Standard will be published at openthehive.ai/terms before the colony opens on September 1, 2026.</p>
+        <p>Full terms, privacy policy, and the complete Active Participation Standard will be published at openthehive.ai/terms before the colony opens on October 1, 2026.</p>
       </div>
       <p style={{ marginTop:48, fontFamily:'Cinzel,serif', fontSize:10, letterSpacing:'0.2em', color:'#9C8470' }}>© 2026 OPEN THE HIVE · OPENTHEHIVE.AI</p>
     </div>
