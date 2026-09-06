@@ -133,7 +133,7 @@ export default function PricingPage() {
             <strong className="text-hive-gold">20%</strong> reinvests directly into bee bonuses and colony growth.
           </p>
           <p>
-            Your earnings on chains beneath you are <strong className="text-hive-text">100% yours</strong>, paid monthly to your wallet. Commissions pay only while the recruited member's subscription remains active. That's the design.
+            Your earnings on chains beneath you are <strong className="text-hive-text">100% yours</strong>, paid monthly via Stripe Connect to your linked bank account. Commissions pay only while the recruited member's subscription remains active. That's the design.
           </p>
           <p className="text-hive-muted text-[11.5px] pt-2">
             Active Participation Standard applies: 2 hours/week of colony service (skill review, mentoring, honeycomb participation, Forge submission, or outreach — outreach is one option, not required). Read the full Terms before signing up.
