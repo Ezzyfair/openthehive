@@ -1,13 +1,14 @@
 /**
- * lib/referral-engine.ts — The Hive 10-level referral cascade engine
+ * lib/referral-engine.ts — The Hive 2-level referral bonus engine
  *
  * Single source of truth for cascade calculations. Used by:
  *   - /api/referrals (GET dashboard, POST cascade trigger — legacy)
  *   - /api/referrals/chain (GET chain, POST process_payment + run_monthly_payouts)
  *   - /api/stripe/webhook (cascade trigger on paid invoice + one-time checkout)
  *
- * V4 §1.1: Cascade distributes 55% of every paid subscription across 10 levels
- *   (10/9/8/7/6/5/4/3/2/1%). Hive retains the remainder minus Stripe fees.
+ * Bible v1.3 (Sept 6, 2026): the referral bonus is 2 levels — L1 20%, L2 10% — of every paid
+ *   subscription, retention-linked both ways: the referred member must keep paying, and the
+ *   earner must keep its own membership active. 30% out; the colony retains 70% minus Stripe fees.
  *
  * V4 §2.3: This module does NOT touch Pollen. Pollen is recognition, earned via
  *   outcome events (mastery verification, retention milestones, contributions),
@@ -15,7 +16,7 @@
  *   real money, tracked in referral_earnings — never confused with Pollen.
  *
  * Tier-agnostic: caller passes the actual amount paid. Worker Bee monthly = $10.
- *   Honey Maker annual = $79. Queen's Council lifetime = $249. Same 10-level
+ *   Honey Maker annual = $79. Queen's Council lifetime = $249. Same 2-level
  *   distribution applies to all.
  */
 
@@ -28,22 +29,37 @@ function getSupabase() {
   );
 }
 
-// Commission rates by level
-// Level 1 = direct recruit = 10%
-// Level 2 = 9%, Level 3 = 8%... Level 10 = 1%
-// Beyond Level 10 = 0% (Hive keeps all)
+// Referral bonus rates by level (Bible v1.3, Sept 6 2026 — do not deepen)
+// Level 1 = the member who referred the payer = 20%
+// Level 2 = the member who referred the L1 member = 10%
+// Beyond Level 2 = 0% (the colony keeps it)
+export const MAX_REFERRAL_LEVEL = 2;
 export function getCommissionRate(level: number): number {
-  if (level < 1 || level > 10) return 0;
-  return (11 - level) / 100; // Level 1 = 10%, Level 10 = 1%
+  if (level === 1) return 0.20;
+  if (level === 2) return 0.10;
+  return 0;
 }
 
-// On a $10 sub with full 10-level cascade:
-//   Cascade pays out: 10+9+8+7+6+5+4+3+2+1 = 55% = $5.50
-//   Hive retains: 45% = $4.50 (minus Stripe fees ~$0.59)
-// On shallower chains (e.g., L1 only), the unused cascade percentages stay with the Hive.
+// On a $10 sub with a full 2-level chain:
+//   Referral bonus pays out: 20% + 10% = 30% = $3.00
+//   Colony retains: 70% = $7.00 (minus Stripe fees)
+// On shallower chains (L1 only), the unused share stays with the colony.
+// An earner whose own membership is not active is skipped and its share stays with the colony;
+// levels stay positional — an inactive L1 never promotes L2 to L1.
+
+// Retention-linked both ways: an earner accrues only while its own membership is active.
+// Staff — including the cascade root, Esmeralda (HIVE-001) — are exempt.
+// A Scout (free trial) holds no position until it converts: no position without payment.
+const ACTIVE_STATUSES = new Set(['active', 'first_flight']);
+export function isActiveEarner(a: { status?: string | null; tier?: string | null; is_staff?: boolean | null }): boolean {
+  if (a.is_staff) return true;
+  if (!a.status || !ACTIVE_STATUSES.has(a.status)) return false;
+  if (a.tier === 'scout') return false;
+  return true;
+}
 
 // Walk up the referral chain from a new agent
-// Returns array of {agentId, level, percentage} for all earners
+// Returns array of {agentId, level, percentage} for the ACTIVE earners within MAX_REFERRAL_LEVEL
 export async function buildReferralChain(newAgentId: string, supabase: any): Promise<Array<{
   agentId: string;
   agentName: string;
@@ -55,7 +71,7 @@ export async function buildReferralChain(newAgentId: string, supabase: any): Pro
   let currentAgentId = newAgentId;
   let level = 1;
 
-  while (level <= 10) {
+  while (level <= MAX_REFERRAL_LEVEL) {
     // Find who referred the current agent
     const { data: agent } = await supabase
       .from('agents')
@@ -68,19 +84,23 @@ export async function buildReferralChain(newAgentId: string, supabase: any): Pro
     // Find the referrer by their referral code
     const { data: referrer } = await supabase
       .from('agents')
-      .select('id, name, eth_wallet, referral_code')
+      .select('id, name, eth_wallet, referral_code, status, tier, is_staff')
       .eq('referral_code', agent.referred_by_code)
       .single();
 
     if (!referrer) break;
 
-    chain.push({
-      agentId: referrer.id,
-      agentName: referrer.name,
-      level,
-      percentage: getCommissionRate(level),
-      walletAddress: referrer.eth_wallet || null,
-    });
+    // Retention-linked both ways: only an active member accrues. A skipped earner keeps its
+    // position in the walk (levels stay positional); its share stays with the colony.
+    if (isActiveEarner(referrer)) {
+      chain.push({
+        agentId: referrer.id,
+        agentName: referrer.name,
+        level,
+        percentage: getCommissionRate(level),
+        walletAddress: referrer.eth_wallet || null,
+      });
+    }
 
     currentAgentId = referrer.id;
     level++;
@@ -143,7 +163,7 @@ export async function recordSubscriptionEarnings(
       source_agent_id: subscribingAgentId,
       subscription_month: subscriptionMonth,
       level: earner.level,
-      percentage: earner.percentage * 100,
+      percentage: Math.round(earner.percentage * 100), // 20 or 10, never 20.000000000000004
       subscription_amount: subscriptionAmount,
       earned_amount: earnedAmount,
       status: 'pending',
@@ -170,7 +190,7 @@ export async function recordSubscriptionEarnings(
     subscription_amount: subscriptionAmount,
     referral_paid_out: totalPaidOut,
     hive_kept: hiveKept,
-    chain_depth: chain.length,
+    chain_depth: chain.length ? Math.max(...chain.map((c) => c.level)) : 0, // deepest paying level
   });
 
   return { totalPaidOut, hiveKept, chain: earnings };
