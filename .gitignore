@@ -5,3 +5,8 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+.bak-*
+*.bak-*
+.env
+.env.*
+.claude/settings.local.json
