@@ -5,7 +5,6 @@
       "/home/francis/Desktop/HIVE-CANON"
     ],
     "allow": [
-      "Bash(cd:*)",
       "Bash(pwd)",
       "Bash(echo:*)",
       "Bash(date:*)",
@@ -45,12 +44,8 @@
       "Bash(git switch:*)",
       "Bash(npx tsc --noEmit)",
       "Bash(npx tsc --noEmit:*)",
-      "Bash(npx:*)",
       "Bash(npm run:*)",
       "Bash(npm test:*)",
-      "Bash(node:*)",
-      "Bash(python3:*)",
-      "Bash(python:*)",
       "Bash(curl -s:*)",
       "Bash(curl -sL:*)",
       "Bash(curl -sI:*)",
