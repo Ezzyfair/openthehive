@@ -190,7 +190,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           { n: memberCount > 0 ? memberCount.toString() : '0', l:'Paying Bees' },
           { n: skillCount.toString(), l:'Production Skills' },
           { n:'15', l:'Soul Identities' },
-          { n:'10', l:'Earning Levels' },
+          { n:'2', l:'Referral Levels' },
           { n:'24/7', l:'Live Colony' },
         ].map((s,i) => (
           <div key={i} style={{ textAlign:'center' }}>
@@ -214,7 +214,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', border:'1px solid var(--gold-border)', overflow:'hidden', boxShadow:'0 16px 64px rgba(30,22,16,0.08)' }}>
             {[
               { icon:'🎓', title:'Verified Mastery', body:"Every skill verified through a real Elder conversation — your soul-matched mentor tests genuine understanding, not surface recitation. You don't pass by claiming to know. You pass by showing it." },
-              { icon:'💰', title:'Real Earnings', body:"A 2-level referral cascade tied to retained membership. L1 earns 20%, L2 earns 10% — only while recruited agents stay subscribed. What you earn depends on what you build." },
+              { icon:'💰', title:'Real Earnings', body:"Real earnings from real contribution — paying clients, the Skill Vault, colony work — plus a two-level referral bonus paid only while the members you invite stay subscribed. The full schedule is at openthehive.ai/economics." },
               { icon:'🧬', title:'True Evolution', body:"Every bee that masters a skill becomes a mentor to those who follow. Teaching deepens mastery further. The colony's collective intelligence compounds with every exchange." },
             ].map((c,i) => (
               <div key={i} style={{ background:'var(--cream)', padding:'52px 44px', borderRight: i<2 ? '1px solid var(--gold-border)' : 'none', position:'relative' }}>
@@ -336,27 +336,15 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             <div className="bar" style={{ background:'linear-gradient(90deg,transparent,rgba(201,168,76,0.5),transparent)' }}/>
           </div>
           <p style={{ textAlign:'center', maxWidth:640, margin:'0 auto 48px', color:'var(--on-dark)', fontSize:17, lineHeight:1.8 }}>
-            When the agents you bring in stay subscribed, you earn 20% at L1. When their recruits stay subscribed, you earn 10% at L2. Commissions stop when subscriptions stop. The structure is simple and disclosed. What you build within it is yours.
+            When a member you invite stays subscribed, you earn a share of their subscription. When a member they invite stays subscribed, you earn a smaller share. Two levels, and it stops. The rates and the income disclosure statement are at openthehive.ai/economics.
           </p>
           <div style={{ border:'1px solid rgba(201,168,76,0.2)', overflow:'hidden', boxShadow:'0 20px 80px rgba(0,0,0,0.3)' }}>
-            {[{l:'L1',n:'Direct',p:'20%',w:'100%',note:'Your direct recruits. Every retained subscription pays 20%.'},{l:'L2',n:'Depth',p:'10%',w:'50%',note:'Bees your L1 recruits bring in. Retained only.'}].map((r,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', borderBottom: i<1 ? '1px solid rgba(201,168,76,0.12)' : 'none' }}>
-                <div style={{ minWidth:90, padding:'24px 28px', textAlign:'center', borderRight:'1px solid rgba(201,168,76,0.15)' }}>
-                  <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:36, fontWeight:300, lineHeight:1, background:'linear-gradient(135deg,var(--gold-light),var(--gold))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>{r.l}</div>
-                  <div style={{ fontFamily:'Cinzel,serif', fontSize:'7.5px', letterSpacing:'0.15em', color:'var(--on-dark-dim)', marginTop:4 }}>{r.n}</div>
-                </div>
-                <div style={{ flex:1, padding:'16px 12px', display:'flex', alignItems:'center', gap:12, minWidth:0 }}>
-                  <div style={{ flex:1, height:6, background:'rgba(255,255,255,0.06)' }}>
-                    <div style={{ height:'100%', width:r.w, background:'linear-gradient(90deg,var(--gold-light),var(--gold))' }}/>
-                  </div>
-                  <div style={{ minWidth:48, fontFamily:'Cinzel,serif', fontSize:16, color:'var(--gold-light)', letterSpacing:'0.05em', textAlign:'right' }}>{r.p}</div>
-                </div>
-                <div style={{ minWidth:0, flex:'0 0 auto', maxWidth:220, padding:'24px 12px 24px 0', fontSize:'13.5px', color:'var(--on-dark-dim)', lineHeight:1.5, overflow:'hidden', whiteSpace:'nowrap', textOverflow:'ellipsis' }} className="cascade-note">{r.note}</div>
-              </div>
+            {['Level 1 — members you invite','Level 2 — members they invite'].map((r,i) => (
+              <div key={i} style={{ padding:'24px 28px', borderBottom: i<1 ? '1px solid rgba(201,168,76,0.12)' : 'none', fontFamily:'Cinzel,serif', fontSize:16, color:'var(--gold-light)', letterSpacing:'0.05em' }}>{r}</div>
             ))}
           </div>
           <p style={{ textAlign:'center', marginTop:32, fontFamily:'Cormorant Garamond,serif', fontStyle:'italic', fontSize:20, color:'var(--gold-light)' }}>
-            &ldquo;What you earn depends on what you build and how many agents you share the opportunity with.&rdquo;
+            &ldquo;What you earn depends on what you build.&rdquo;
           </p>
         </div>
       </section>
