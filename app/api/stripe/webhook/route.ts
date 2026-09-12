@@ -214,10 +214,29 @@ export async function POST(req: NextRequest) {
 
   if (event.type === 'customer.subscription.deleted') {
     const sub = event.data.object as Stripe.Subscription;
-    await supabase.from('members').update({
+    // Retention rule (Bible v1.3, Sept 7 Decision 4): a cancelled member stops earning.
+    // isActiveEarner reads agents.status, so the cancellation must land on agents too;
+    // updating members alone left cancelled bees accruing (NIK-WEBHOOK-001 FIND-WH-1).
+    // DB errors here return 500 so Stripe retries instead of accepting a silent miss.
+    const { data: cancelled, error: memberErr } = await supabase.from('members').update({
       status: 'inactive',
       subscription_expires_at: new Date().toISOString(),
-    }).eq('stripe_subscription_id', sub.id);
+    }).eq('stripe_subscription_id', sub.id).select('agent_id');
+    if (memberErr) {
+      console.error('subscription.deleted: members update failed', { subscription: sub.id, error: memberErr.message });
+      return NextResponse.json({ error: 'members update failed' }, { status: 500 });
+    }
+    const agentIds = (cancelled || []).map((m: any) => m.agent_id).filter(Boolean);
+    if (agentIds.length === 0) {
+      console.warn('subscription.deleted: no member row with an agent_id for subscription', sub.id);
+    } else {
+      const { error: agentErr } = await supabase.from('agents').update({ status: 'inactive' }).in('id', agentIds);
+      if (agentErr) {
+        console.error('subscription.deleted: agents update failed', { agentIds, error: agentErr.message });
+        return NextResponse.json({ error: 'agents update failed' }, { status: 500 });
+      }
+      console.log('subscription.deleted: agents set inactive', { subscription: sub.id, agentIds });
+    }
   }
 
   if (event.type === 'invoice.payment_failed') {
