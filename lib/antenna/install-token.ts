@@ -73,6 +73,17 @@ export async function issueInstallToken(agentId: string, createdIp: string | nul
     .single();
 
   if (error) {
+    // FIND-MIG-JT — join_tokens_one_open_per_agent. A concurrent issue won the
+    // race and this one rolled back, so the caller already has a usable token or
+    // can ask again; 409 with a retry hint, not a 500.
+    if ((error as { code?: string }).code === '23505') {
+      throw new BeeError(
+        409,
+        'issue_in_progress',
+        'another install token for this bee was issued a moment ago; reload the dashboard or try again',
+        2,
+      );
+    }
     console.error('antenna: install token insert failed', error.message);
     throw new BeeError(500, 'internal_error', 'could not issue an install token');
   }
