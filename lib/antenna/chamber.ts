@@ -60,12 +60,17 @@ export function deriveInbox(beeName: string): string {
 }
 
 /**
- * §14 ruling 4: 30 s during First Flight and Power Hours, 60 s otherwise,
- * server-hinted. First Flight is agents.status === 'first_flight'.
+ * Cadence hint. §14 ruling 4 specifies 30 s during First Flight AND Power Hours,
+ * 60 s otherwise.
  *
- * Power Hours are not yet represented in any table this route can read, so they
- * do not shorten the interval today. Flagged for step 7 — when the schedule
- * exists, it is one OR in this function and nothing else changes, because the
+ * THIS FUNCTION IMPLEMENTS FIRST FLIGHT ONLY (agents.status === 'first_flight').
+ * Power Hours are NOT implemented: no table in this schema represents the Power
+ * Hours schedule, so there is nothing to read. During a Power Hour a bee polls at
+ * 60 s, not 30 s — the design's cadence is therefore only half-honored until the
+ * schedule exists.
+ *
+ * That is a step-7 item, not an oversight left silent here. When the schedule
+ * lands this becomes one additional OR and nothing else changes, because the
  * client already honors whatever this returns.
  */
 export const POLL_SECONDS_FLIGHT = 30;

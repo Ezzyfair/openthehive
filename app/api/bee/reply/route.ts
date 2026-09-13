@@ -35,6 +35,9 @@ const CREDENTIAL_PATTERNS: Array<[string, RegExp]> = [
   ['stripe_test', /sk_test_[A-Za-z0-9]{8,}/],
   ['stripe_webhook', /whsec_[A-Za-z0-9]{8,}/],
   ['stripe_restricted', /rk_live_[A-Za-z0-9]{8,}/],
+  // Anthropic keys (NIK-ANTENNA-004b). hive-responder holds one; Antenna holds
+  // none (§6.11), so one appearing in a chamber is a leak either way.
+  ['anthropic', /sk-ant-[A-Za-z0-9_-]{8,}/],
   ['jwt', /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
   ['pem_block', /-----BEGIN /],
   ['aws_key', /AKIA[0-9A-Z]{16}/],
@@ -84,12 +87,19 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await admin
       .from('messages')
+      // NOTE — in_reply_to is accepted on the body (§5.3) but NOT persisted.
+      // There is no in_reply_to column on messages: every other insert in this
+      // repo writes exactly these four fields, and the column appears nowhere in
+      // the code or the migrations. Sending it would fail the insert outright, so
+      // threading is dropped rather than crashing every threaded reply.
+      // Making it real is one migration — ALTER TABLE messages ADD COLUMN
+      // in_reply_to UUID REFERENCES messages(id) — plus one line here.
+      // Flagged in NIK-ANTENNA-004c/d.
       .insert({
         honeycomb_id: chamberId,
         agent_id: bee.agent_id,
         content: body.content,
         moderation_status: 'approved',
-        ...(body.in_reply_to ? { in_reply_to: body.in_reply_to } : {}),
       })
       .select('id')
       .single();

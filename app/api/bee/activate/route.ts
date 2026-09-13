@@ -81,13 +81,27 @@ export async function POST(req: NextRequest) {
       throw new BeeError(500, 'internal_error', 'activation failed');
     }
 
-    const { data: agent } = await antennaAdmin()
+    // Hard requirement, not a nicety (NIK-ANTENNA-004b). The token is already
+    // minted and the install token already consumed at this point, so a missing
+    // agent means the row the FK pointed at is gone — a broken activation. It
+    // fails loudly rather than handing the bee a working token under the name
+    // 'Bee' and an inbox derived from it, which is an identity the colony would
+    // then have to live with.
+    const { data: agent, error: agentErr } = await antennaAdmin()
       .from('agents')
       .select('id, name, status')
       .eq('id', agentId)
       .maybeSingle();
 
-    const beeName = (agent as { name?: string } | null)?.name ?? 'Bee';
+    if (agentErr) {
+      console.error('antenna: post-activation agent lookup failed', agentErr.message);
+      throw new BeeError(500, 'internal_error', 'activation completed but the agent could not be read');
+    }
+    const beeName = (agent as { name?: string } | null)?.name;
+    if (!beeName) {
+      console.error('antenna: activation produced no readable agent', agentId);
+      throw new BeeError(500, 'internal_error', 'activation completed but the agent could not be read');
+    }
 
     return NextResponse.json(
       {

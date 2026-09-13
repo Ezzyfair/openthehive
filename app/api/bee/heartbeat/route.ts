@@ -18,15 +18,10 @@ import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
 import { writeBeeEvent } from '@/lib/antenna/events';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
 import { heartbeatSchema, validateClosed, validationStatus } from '@/lib/antenna/schemas';
+import { LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-/**
- * The version the dashboard advertises. Notify-only: nothing acts on a mismatch
- * except the human. Moves when a new antenna.py ships (§13 step 6).
- */
-export const LATEST_CLIENT_VERSION = '0.2.0';
 
 interface HeartbeatBody {
   client_version: string;
