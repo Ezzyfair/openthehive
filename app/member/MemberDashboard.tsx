@@ -10,6 +10,7 @@
 // skip past it.
 // ----------------------------------------------------------------------------
 import React, { useCallback, useEffect, useState } from 'react';
+import { ANTENNA_SHA256, LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 
 type Platform = 'linux' | 'macos' | 'windows';
 
@@ -38,10 +39,12 @@ interface BeeRow {
   install_tokens: InstallRow[];
 }
 
-// §13 step 6 publishes the installer and its digest. Until then the page says so
-// rather than printing a number that cannot be checked.
-const INSTALLER_VERSION: string | null = null;
-const INSTALLER_SHA256: string | null = null;
+// Single-sourced from lib/antenna/version.ts, which scripts/antenna-release.mjs
+// keeps in step with the published file. The page never carries its own copy of
+// the digest — a stale number here is worse than no number, because a member who
+// checks it and sees a mismatch has no way to tell which side is wrong.
+const INSTALLER_VERSION: string | null = LATEST_CLIENT_VERSION;
+const INSTALLER_SHA256: string | null = ANTENNA_SHA256;
 
 const DOWNLOAD = 'curl -fsSL https://openthehive.ai/antenna/antenna.py -o antenna.py';
 

@@ -12,3 +12,12 @@
 // ships (§13 step 6).
 // ----------------------------------------------------------------------------
 export const LATEST_CLIENT_VERSION = '0.2.0';
+
+/**
+ * SHA-256 of the published public/antenna/antenna.py, printed on the dashboard as
+ * the second channel a member checks the download against (§2).
+ *
+ * GENERATED — do not edit by hand. Run `node scripts/antenna-release.mjs` after
+ * changing the client or either template; `--check` fails on drift.
+ */
+export const ANTENNA_SHA256: string | null = '2a3424db2c5b8eeed11e5897f5fd27db19f296ac5248843d4622b9f3e0db6ae0';
