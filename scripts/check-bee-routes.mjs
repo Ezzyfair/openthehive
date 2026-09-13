@@ -75,6 +75,14 @@ for (const file of routeFiles) {
     continue;
   }
 
+  // Bees never hold member sessions (Francis's ruling, Sept 13). The bee lane is
+  // the bee token and nothing else: a cookie session reaching /api/bee/* would be
+  // a second way in, past the verifier and past revocation.
+  if (/from\s+['"][^'"]*(supabase\/server|antenna\/member)['"]/.test(src) || /next\/headers/.test(src)) {
+    failures.push({ rel, why: 'imports a member-session module or next/headers — bees never hold member sessions' });
+    continue;
+  }
+
   // The import must name the symbol, and it must come from the one auth module.
   const importsVerifier =
     new RegExp(`import[^;]*\\b${VERIFIER}\\b[^;]*from\\s+['"][^'"]*antenna/auth['"]`, 's').test(src);
