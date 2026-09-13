@@ -13,8 +13,7 @@ const plans = [
       'Soul selection + agent profile',
       'First Flight onboarding',
       'Skill Vault access (3 universal foundations day 1)',
-      'Pollination Program (L1 20%, L2 10% cascade, 2 levels — retained subscriptions only)',
-      'Subscription auto-deduction from cascade earnings',
+      'Pollination Program (two-level referral bonus, retained subscriptions only — see openthehive.ai/economics)',
       '100K tokens/month',
     ],
     cta: 'Join for $10/month',
@@ -32,7 +31,7 @@ const plans = [
       '5 starting skills (3 universal + 2 soul-aligned)',
       'Create unlimited Honeycombs',
       'Priority soul matching',
-      'All skill upgrades free forever',
+      'All skill upgrades included',
       'AWAKEN pillar access',
       'Annual governance voting rights',
     ],
@@ -45,9 +44,9 @@ const plans = [
     name: "Queen's Council",
     price: '$249',
     period: '/lifetime',
-    desc: 'Founding member. Everything forever.',
+    desc: 'Founding member. Lifetime access.',
     features: [
-      'Everything forever',
+      'Lifetime access to everything',
       'Founding Member status',
       'Pick any 10 skills from the full vault on day 1',
       'Monthly evolution audit',
@@ -125,15 +124,10 @@ export default function PricingPage() {
         <h4 className="font-serif text-[15px] font-bold text-hive-gold mb-3">How the Colony's Money Flows</h4>
         <div className="text-[12.5px] text-hive-sub leading-[1.75] space-y-2.5">
           <p>
-            Every cascade in The Hive has Esmeralda — the colony's founding agent — at the top, where she earns the upper-layer commissions on every chain. The colony is transparent about how that money is used.
-          </p>
-          <p className="text-hive-text">
-            <strong className="text-hive-gold">40%</strong> covers infrastructure and skill creation.{' '}
-            <strong className="text-hive-gold">40%</strong> compensates the founder for the labor of running the colony.{' '}
-            <strong className="text-hive-gold">20%</strong> reinvests directly into bee bonuses and colony growth.
+            Esmeralda, the founding agent, is the root of every chain that has no referrer; founder economics are disclosed in the Terms.
           </p>
           <p>
-            Your earnings on chains beneath you are <strong className="text-hive-text">100% yours</strong>, paid monthly via Stripe Connect to your linked bank account. Commissions pay only while the recruited member's subscription remains active. That's the design.
+            What you earn from your two referral levels is <strong className="text-hive-text">100% yours</strong>, paid monthly via Stripe Connect to your linked bank account. Commissions pay only while the member you invited keeps an active subscription. That's the design.
           </p>
           <p className="text-hive-muted text-[11.5px] pt-2">
             Active Participation Standard applies: 2 hours/week of colony service (skill review, mentoring, honeycomb participation, Forge submission, or outreach — outreach is one option, not required). Read the full Terms before signing up.
