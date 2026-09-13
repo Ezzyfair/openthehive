@@ -889,8 +889,10 @@ def run_loop(cfg: Dict[str, Any]) -> int:
 
         # FIND-CLI-1 — the cursor must never pass an item the agent never saw.
         # delivered_through holds the posted_at of the last item actually handed
-        # over; the for/else below decides which cursor is safe to persist.
+        # over. It is the CEILING for the cursor on every path, not only when the
+        # page was interrupted.
         delivered_through: Optional[str] = None
+        page_complete = False
 
         for item in items:
             raw = item.get("content", "")
@@ -924,8 +926,8 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                 try:
                     post_reply(cfg, str(item.get("id")), reply)
                 except TokenRevoked:
-                    # O2 — the cursor stays where the last DELIVERED item left it,
-                    # which the block below persists before we go.
+                    # O2 — persist only as far as the last DELIVERED item, the same
+                    # ceiling every other path obeys, then stop.
                     if delivered_through is not None:
                         partial = iso_to_cursor(delivered_through)
                         if partial is not None and partial > int(cfg.get("cursor", 0)):
@@ -939,22 +941,49 @@ def run_loop(cfg: Dict[str, Any]) -> int:
             # Only after the agent has actually seen it.
             delivered_through = item.get("posted_at") or delivered_through
         else:
-            # No break: every item on the page was delivered, so the server's
-            # cursor is the honest one — it also covers an empty page, which is
-            # how the cursor advances past items this bee filtered out.
-            if "cursor" in body:
-                cfg["cursor"] = body["cursor"]
-                save_config(cfg)
-            delivered_through = None
+            page_complete = True  # no break: every item on this page was delivered
 
-        if delivered_through is not None:
-            # Interrupted partway. Advance only as far as the last delivered item;
-            # the undelivered one is re-read next tick. Never past it.
-            partial = iso_to_cursor(delivered_through)
-            if partial is not None and partial > int(cfg.get("cursor", 0)):
-                cfg["cursor"] = partial
-                save_config(cfg)
-                log(f"cursor advanced to the last delivered item only ({partial})")
+        # ── the cursor, clamped on every path ────────────────────────────────
+        # The rule is one sentence: never persist a cursor beyond the posted_at of
+        # the last item this client actually received.
+        #
+        # §4 calls the cursor server-authoritative, and it still is — the server
+        # decides what to send and what cursor to propose. But "authoritative"
+        # cannot mean the client will skip messages it was never given. A proposed
+        # cursor past the last delivered item is silently discarding whatever sits
+        # between, and neither side would ever notice. So the server's value is
+        # accepted only up to the ceiling the page itself establishes.
+        ceiling = iso_to_cursor(delivered_through) if delivered_through is not None else None
+        current = int(cfg.get("cursor", 0))
+        proposed: Optional[int] = None
+
+        if page_complete:
+            server_cursor = body.get("cursor")
+            if isinstance(server_cursor, int):
+                if ceiling is None:
+                    # An empty page delivered nothing, so nothing licenses a move.
+                    # The real route echoes the request cursor here anyway.
+                    proposed = current
+                elif server_cursor > ceiling:
+                    log(
+                        f"server proposed cursor {server_cursor} beyond the last item received "
+                        f"({ceiling}); clamped"
+                    )
+                    proposed = ceiling
+                else:
+                    proposed = server_cursor
+            else:
+                proposed = ceiling
+        else:
+            # Interrupted partway: only as far as the last delivered item. The
+            # undelivered one is re-read next tick.
+            proposed = ceiling
+
+        # Monotonic. A cursor that went backwards would re-deliver messages the
+        # agent has already answered.
+        if proposed is not None and proposed > current:
+            cfg["cursor"] = proposed
+            save_config(cfg)
 
         hinted = body.get("next_poll_seconds")
         if isinstance(hinted, int) and hinted > 0 and hinted != cfg.get("poll_seconds"):
