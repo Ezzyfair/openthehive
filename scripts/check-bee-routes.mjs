@@ -22,6 +22,16 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const BEE_DIR = join(ROOT, 'app', 'api', 'bee');
 const VERIFIER = 'verifyBeeToken';
 
+// The single exemption, by exact path. /activate is where a bee token comes
+// FROM: the caller presents a one-time install token and leaves with a bee
+// token, so there is nothing for the verifier to verify. Every other route on
+// this namespace must go through it.
+//
+// Listed here rather than skipped silently: an exemption that does not print is
+// an exemption nobody audits. Adding to this set is a design change and needs a
+// Nikita ruling, not a commit.
+const MINTS_TOKENS = new Set(['app/api/bee/activate/route.ts']);
+
 function walk(dir) {
   let out = [];
   let entries;
@@ -49,9 +59,21 @@ if (routeFiles.length === 0) {
 }
 
 const failures = [];
+const exempt = [];
 for (const file of routeFiles) {
   const src = readFileSync(file, 'utf8');
-  const rel = relative(ROOT, file);
+  const rel = relative(ROOT, file).split(sep).join('/');
+
+  if (MINTS_TOKENS.has(rel)) {
+    // Still checked, just for the opposite property: a minting route must not
+    // quietly grow a second authentication path.
+    if (new RegExp(`\\b${VERIFIER}\\s*\\(`).test(src)) {
+      failures.push({ rel, why: `is exempt as a minting route but calls ${VERIFIER}` });
+    } else {
+      exempt.push(rel);
+    }
+    continue;
+  }
 
   // The import must name the symbol, and it must come from the one auth module.
   const importsVerifier =
@@ -64,9 +86,12 @@ for (const file of routeFiles) {
 
 const width = Math.max(...routeFiles.map((f) => relative(ROOT, f).length));
 for (const file of routeFiles) {
-  const rel = relative(ROOT, file);
+  const rel = relative(ROOT, file).split(sep).join('/');
   const bad = failures.find((f) => f.rel === rel);
-  console.log(`  ${bad ? 'FAIL' : 'ok  '}  ${rel.padEnd(width)}${bad ? '  ' + bad.why : ''}`);
+  const isExempt = exempt.includes(rel);
+  const label = bad ? 'FAIL' : isExempt ? 'EXEMPT' : 'ok';
+  const note = bad ? '  ' + bad.why : isExempt ? '  mints the token — nothing to verify' : '';
+  console.log(`  ${label.padEnd(6)}  ${rel.padEnd(width)}${note}`);
 }
 
 if (failures.length > 0) {
@@ -77,5 +102,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`\ncheck-bee-routes: all ${routeFiles.length} route file(s) go through ${VERIFIER}.`);
+console.log(`\ncheck-bee-routes: ${routeFiles.length - exempt.length} of ${routeFiles.length} route file(s) go through ${VERIFIER}; ${exempt.length} exempt (mints tokens).`);
 process.exit(0);

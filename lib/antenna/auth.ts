@@ -88,6 +88,16 @@ export function mintBeeToken(): MintedBeeToken {
   };
 }
 
+/**
+ * Install tokens are hashed unsalted: join_tokens has a token_hash column and no
+ * salt column (§9), and the row is single-use with a 30-minute TTL (§2). The whole
+ * `hive_join_<...>` string is hashed, not a substring, so there is one spelling of
+ * the input and no place for minter and verifier to disagree.
+ */
+export function hashInstallToken(installToken: string): string {
+  return createHash('sha256').update(Buffer.from(installToken, 'utf8')).digest('hex');
+}
+
 function unauthorized(message: string): BeeError {
   // One message for every auth failure. The caller learns that it failed, never
   // which of the checks failed — no probing the difference between an unknown
