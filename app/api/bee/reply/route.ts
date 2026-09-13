@@ -24,7 +24,6 @@ export const dynamic = 'force-dynamic';
 
 interface ReplyBody {
   content: string;
-  in_reply_to: string | null;
 }
 
 /** §6.10 — the same shapes the client sanitizes on the way in. */
@@ -87,14 +86,10 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await admin
       .from('messages')
-      // NOTE — in_reply_to is accepted on the body (§5.3) but NOT persisted.
-      // There is no in_reply_to column on messages: every other insert in this
-      // repo writes exactly these four fields, and the column appears nowhere in
-      // the code or the migrations. Sending it would fail the insert outright, so
-      // threading is dropped rather than crashing every threaded reply.
-      // Making it real is one migration — ALTER TABLE messages ADD COLUMN
-      // in_reply_to UUID REFERENCES messages(id) — plus one line here.
-      // Flagged in NIK-ANTENNA-004c/d.
+      // messages has no in_reply_to column, so §5.3's threading field is gone from
+      // the schema entirely rather than accepted and dropped (Nikita's ruling).
+      // It returns with: ALTER TABLE messages ADD COLUMN in_reply_to UUID
+      // REFERENCES messages(id) — one migration, then one line here.
       .insert({
         honeycomb_id: chamberId,
         agent_id: bee.agent_id,

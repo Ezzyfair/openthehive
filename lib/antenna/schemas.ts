@@ -36,9 +36,11 @@ export const activateSchema: Schema = {
   mode: { kind: 'string', oneOf: ['command', 'openclaw', 'files'] },
 };
 
+// in_reply_to was removed on Nikita's ruling (NIK-ANTENNA-004b/d): messages has no
+// such column, so the field could never be persisted, and a body field the server
+// silently drops is worse than no field at all. Threading returns when the column does.
 export const replySchema: Schema = {
   content: { kind: 'string', minLen: 1, maxLen: 16384 },
-  in_reply_to: { kind: 'stringOrNull', maxLen: 100 },
 };
 
 export const awakenSchema: Schema = {
