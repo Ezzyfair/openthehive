@@ -55,6 +55,15 @@ export const heartbeatSchema: Schema = {
   flags: { kind: 'stringArray', maxItems: 32, maxLen: 200 },
 };
 
+/**
+ * POST /api/bee/adopt — §10.2. The bee has already appended the L1 line on its own
+ * machine by its own hand; this only records that it happened. No message id: the
+ * adoption is no longer announced as a chamber post, so there is nothing to cite.
+ */
+export const adoptSchema: Schema = {
+  client_version: { kind: 'string', minLen: 1, maxLen: 40 },
+};
+
 /** POST /api/bee/revoke takes {} — no fields, and no extra ones either. */
 export const revokeSchema: Schema = {};
 
