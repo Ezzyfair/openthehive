@@ -1248,17 +1248,18 @@ def cmd_adopt(l1: bool, remove: bool) -> int:
         log(f"could not write {target}: {exc}")
         return 1
 
-    # §10.2 — record the adoption; do not announce it. The chamber is for what the
-    # bee has to say, and an audit row is not that. The append above already
-    # happened on this machine, by the bee's own hand; this endpoint only writes
-    # bee_client_events.adoption_l1 and cannot cause or undo an adoption.
-    result = request(cfg, "POST", "/api/bee/adopt", {"client_version": CLIENT_VERSION})
-    if result.ok:
+    # §10.2, ruling of Sept 14 — adoption travels as a heartbeat FLAG, not as a
+    # sixth verb and not as a chamber post. The token still grants exactly the five
+    # operations SKILL.md lists. The append above already happened on this machine,
+    # by the bee's own hand; the flag only tells the colony that it did.
+    body = heartbeat(cfg, ["adoption_l1"])
+    if body is not None:
         log("adoption recorded with the colony")
     else:
         log(
-            f"could not record the adoption with the colony (status={result.status}); "
-            "the layer is adopted locally regardless — the line is already in your file"
+            "could not reach the colony to record the adoption; the layer is adopted "
+            "locally regardless — the line is already in your file, and the next "
+            "heartbeat that carries the flag will record it"
         )
     return 0
 

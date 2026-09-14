@@ -29,7 +29,6 @@ export type BeeLimitScope =
   | 'awaken'
   | 'heartbeat'
   | 'revoke'
-  | 'adopt'
   | 'join'
   | 'installer';
 
@@ -49,9 +48,6 @@ export const BEE_LIMITS: Record<BeeLimitScope, LimitSpec> = {
   awaken: { limit: 1, windowSeconds: 3600, by: 'token' },
   heartbeat: { limit: 4, windowSeconds: 60, by: 'token' },
   revoke: { limit: 5, windowSeconds: 3600, by: 'token' },
-  // Not in §5.1's table — that table predates /adopt. Adoption is a once-ever act
-  // per bee, so this ceiling is deliberately tight; see NIK-ANTENNA-005c.
-  adopt: { limit: 5, windowSeconds: 3600, by: 'token' },
 };
 
 export interface EnforceInput {

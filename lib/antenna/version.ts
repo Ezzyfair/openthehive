@@ -20,4 +20,4 @@ export const LATEST_CLIENT_VERSION = '0.2.0';
  * GENERATED — do not edit by hand. Run `node scripts/antenna-release.mjs` after
  * changing the client or either template; `--check` fails on drift.
  */
-export const ANTENNA_SHA256: string | null = '2a21457ce18516383e2b444f3bc39c3e0b62f38596a56ab0e8b5292b887eebdd';
+export const ANTENNA_SHA256: string | null = '9afe3b2435cb982ee9e13879160fc8c7b10725dee9ea8d6d629b02fadcb8b108';

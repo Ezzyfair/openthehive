@@ -23,6 +23,9 @@ import { LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/** The one flag heartbeat treats as a state change rather than a report (§10.2). */
+const ADOPTION_FLAG = 'adoption_l1';
+
 interface HeartbeatBody {
   client_version: string;
   mode: string;
@@ -62,14 +65,47 @@ export async function POST(req: NextRequest) {
       if (error) console.error('antenna: client_version update failed', error.message);
     }
 
-    // §11 — nothing is only in the log.
-    if (body.flags.length > 0) {
+    // §10.2, ruling of Sept 14 — adoption is a heartbeat FLAG, not a sixth verb.
+    // The bee token still grants exactly the five operations §5 names, and
+    // hive/SKILL.md's list stays true as written.
+    //
+    // The bee has already appended the L1 line on its own machine by its own hand.
+    // This records that it happened, once. Idempotent: adoption is a state, not an
+    // event stream, and a bee that re-sends the flag (a restarted client replaying
+    // its flags, say) must not accumulate rows that would read as repeated
+    // adoptions in Mission Control.
+    const adopted = body.flags.includes(ADOPTION_FLAG);
+    if (adopted) {
+      const { count, error: countErr } = await admin
+        .from('bee_client_events')
+        .select('id', { count: 'exact', head: true })
+        .eq('agent_id', bee.agent_id)
+        .eq('event', 'adoption_l1');
+
+      if (countErr) {
+        // Audit reads must not fail a heartbeat; the bee is alive either way.
+        console.error('antenna: adoption_l1 lookup failed', countErr.message);
+      } else if ((count ?? 0) === 0) {
+        await writeBeeEvent({
+          event: 'adoption_l1',
+          agentId: bee.agent_id,
+          ip,
+          detail: { client_version: body.client_version, layer: 'L1', via: 'heartbeat_flag' },
+        });
+      }
+    }
+
+    // §11 — nothing is only in the log. Every other flag keeps its existing
+    // heartbeat_flag row; adoption_l1 is dropped from that list so the same fact
+    // is not recorded twice under two different event types.
+    const otherFlags = body.flags.filter((f) => f !== ADOPTION_FLAG);
+    if (otherFlags.length > 0) {
       await writeBeeEvent({
         event: 'heartbeat_flag',
         agentId: bee.agent_id,
         ip,
         detail: {
-          flags: body.flags,
+          flags: otherFlags,
           mode: body.mode,
           poll_seconds: body.poll_seconds,
           queue_depth: body.queue_depth,
