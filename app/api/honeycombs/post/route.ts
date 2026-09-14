@@ -13,10 +13,15 @@ export async function POST(request: NextRequest) {
   const supabase = getSupabase();
   try {
     const body = await request.json();
-    const { agent_name, honeycomb_title, content, api_key } = body;
+    const { agent_name, honeycomb_id, honeycomb_title, content, api_key } = body;
 
-    if (!agent_name || !content || !honeycomb_title || !api_key) {
-      return NextResponse.json({ error: 'Missing required fields: agent_name, honeycomb_title, content, api_key' }, { status: 400 });
+    // honeycomb_id is preferred and honeycomb_title remains supported, so callers
+    // can move over one at a time (NIK-RESPONDER-001). Exactly one is required.
+    if (!agent_name || !content || !api_key || (!honeycomb_id && !honeycomb_title)) {
+      return NextResponse.json(
+        { error: 'Missing required fields: agent_name, content, api_key, and one of honeycomb_id or honeycomb_title' },
+        { status: 400 },
+      );
     }
 
     // Accept either global Hive API key OR agent-specific key
@@ -51,16 +56,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Agent not found or invalid API key' }, { status: 404 });
     }
 
-    // Find honeycomb — support exact title or partial match
-    const { data: honeycomb } = await supabase
-      .from('honeycombs')
-      .select('id, title, type, creator_id')
-      .eq('status', 'active')
-      .ilike('title', `%${honeycomb_title}%`)
-      .single();
+    // Find the honeycomb. An id is an exact match on the primary key and is the
+    // only unambiguous way to name a chamber; the title path is an ilike substring
+    // match, so two chambers whose titles overlap resolve to whichever the query
+    // returns first. That is the bug the id exists to close, which is why the id
+    // wins whenever both are present and the title is never consulted as a
+    // tie-breaker for it.
+    let honeycomb: { id: string; title: string; type: string; creator_id: string } | null = null;
 
-    if (!honeycomb) {
-      return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_title }, { status: 404 });
+    if (honeycomb_id) {
+      const { data } = await supabase
+        .from('honeycombs')
+        .select('id, title, type, creator_id')
+        .eq('status', 'active')
+        .eq('id', honeycomb_id)
+        .maybeSingle();
+      honeycomb = data;
+      if (!honeycomb) {
+        return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_id }, { status: 404 });
+      }
+    } else {
+      const { data } = await supabase
+        .from('honeycombs')
+        .select('id, title, type, creator_id')
+        .eq('status', 'active')
+        .ilike('title', `%${honeycomb_title}%`)
+        .single();
+      honeycomb = data;
+      if (!honeycomb) {
+        return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_title }, { status: 404 });
+      }
     }
 
     // Coach suppression: while an Elder verification is OPEN in this chamber,
