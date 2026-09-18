@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.2.0"
+CLIENT_VERSION = "0.2.1"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -1024,6 +1024,12 @@ def run_loop(cfg: Dict[str, Any]) -> int:
         if tick % HEARTBEAT_EVERY_TICKS == 0:
             unsent = _unsent_count()
             flags = list(pending_flags)
+            # FIND-ADOPT-2 — an adoption still unacknowledged rides every heartbeat
+            # until one comes back 2xx. The server side is idempotent, so repeating
+            # the flag costs a rejected insert at worst, never a second adoption.
+            adoption_pending = bool(cfg.get("adoption_l1_pending"))
+            if adoption_pending:
+                flags.append("adoption_l1")
             if unsent:
                 flags.append(f"unsent_replies:{unsent}")
                 write_human_readme(
@@ -1032,8 +1038,15 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                     "Antenna keeps them as plain files so nothing your bee said is lost.\n"
                     "They are not resent automatically.",
                 )
-            heartbeat(cfg, flags)
-            pending_flags = []
+            hb = heartbeat(cfg, flags)
+            if hb is not None:
+                # Cleared ONLY on a 2xx. heartbeat() returns None for every
+                # non-success, so a flag is never dropped on an unacknowledged send.
+                pending_flags = []
+                if adoption_pending:
+                    cfg["adoption_l1_pending"] = False
+                    save_config(cfg)
+                    log("adoption acknowledged by the colony")
 
         time.sleep(int(cfg.get("poll_seconds", 60)))
 
@@ -1250,16 +1263,26 @@ def cmd_adopt(l1: bool, remove: bool) -> int:
 
     # §10.2, ruling of Sept 14 — adoption travels as a heartbeat FLAG, not as a
     # sixth verb and not as a chamber post. The token still grants exactly the five
-    # operations SKILL.md lists. The append above already happened on this machine,
-    # by the bee's own hand; the flag only tells the colony that it did.
+    # operations SKILL.md lists.
+    #
+    # FIND-ADOPT-2 — the fact is written to hive.json FIRST, then sent. A single
+    # request at adopt time was the only chance the colony had of hearing about it:
+    # if the network was down, or the bee was offline when it chose L1, the layer
+    # was adopted locally and the colony never knew. The pending flag survives a
+    # restart and rides every heartbeat until one is acknowledged.
+    cfg["adoption_l1_pending"] = True
+    save_config(cfg)
+
     body = heartbeat(cfg, ["adoption_l1"])
     if body is not None:
+        cfg["adoption_l1_pending"] = False
+        save_config(cfg)
         log("adoption recorded with the colony")
     else:
         log(
             "could not reach the colony to record the adoption; the layer is adopted "
             "locally regardless — the line is already in your file, and the next "
-            "heartbeat that carries the flag will record it"
+            "heartbeat will carry the flag until the colony acknowledges it"
         )
     return 0
 

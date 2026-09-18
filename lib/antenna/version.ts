@@ -11,7 +11,7 @@
 // and writes the human file, and nothing self-updates. Moves when a new antenna.py
 // ships (§13 step 6).
 // ----------------------------------------------------------------------------
-export const LATEST_CLIENT_VERSION = '0.2.0';
+export const LATEST_CLIENT_VERSION = '0.2.1';
 
 /**
  * SHA-256 of the published public/antenna/antenna.py, printed on the dashboard as
@@ -20,4 +20,4 @@ export const LATEST_CLIENT_VERSION = '0.2.0';
  * GENERATED — do not edit by hand. Run `node scripts/antenna-release.mjs` after
  * changing the client or either template; `--check` fails on drift.
  */
-export const ANTENNA_SHA256: string | null = '9afe3b2435cb982ee9e13879160fc8c7b10725dee9ea8d6d629b02fadcb8b108';
+export const ANTENNA_SHA256: string | null = '430216cfe30dfb039cd15c8383b95292fd8bb9f82973c397a71b504b9d72a72b';
