@@ -47,6 +47,42 @@ export async function writeBeeEvent(input: BeeEventInput): Promise<void> {
   }
 }
 
+/**
+ * Records the L1 adoption exactly once (§10.2, FIND-ADOPT-1).
+ *
+ * Insert-and-catch, not count-then-insert. The old shape read the row count and
+ * inserted when it was zero, which is two statements with a race between them:
+ * two heartbeats in flight could both read zero and both insert. This lets the
+ * database decide — bee_client_events_one_adoption_per_agent raises 23505 on the
+ * second attempt, and a unique violation here is not a failure, it is the answer.
+ *
+ * Returns what happened so the caller can tell the three cases apart. Adoption is
+ * a state: "already" is success.
+ */
+export async function recordAdoptionOnce(opts: {
+  agentId: string;
+  ip?: string | null;
+  detail?: Record<string, unknown>;
+}): Promise<'inserted' | 'already' | 'failed'> {
+  try {
+    const { error } = await antennaAdmin()
+      .from('bee_client_events')
+      .insert({
+        agent_id: opts.agentId,
+        event: 'adoption_l1',
+        ip: opts.ip ?? null,
+        detail_json: opts.detail ?? {},
+      });
+    if (!error) return 'inserted';
+    if ((error as { code?: string }).code === '23505') return 'already';
+    console.error('antenna: adoption_l1 insert failed', error.message);
+    return 'failed';
+  } catch (e) {
+    console.error('antenna: adoption_l1 insert threw', e);
+    return 'failed';
+  }
+}
+
 // §6.8 — the engine shouts. Both thresholds fire BELOW the hard ceiling, so
 // production stops being throttled before it stops being seen.
 const RUNAWAY_RATE_LIMIT_COUNT = 3;

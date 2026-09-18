@@ -15,7 +15,7 @@ import { verifyBeeToken } from '@/lib/antenna/auth';
 import { nextPollSeconds } from '@/lib/antenna/chamber';
 import { antennaAdmin, clientIp } from '@/lib/antenna/db';
 import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
-import { writeBeeEvent } from '@/lib/antenna/events';
+import { recordAdoptionOnce, writeBeeEvent } from '@/lib/antenna/events';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
 import { heartbeatSchema, validateClosed, validationStatus } from '@/lib/antenna/schemas';
 import { LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
@@ -74,24 +74,23 @@ export async function POST(req: NextRequest) {
     // event stream, and a bee that re-sends the flag (a restarted client replaying
     // its flags, say) must not accumulate rows that would read as repeated
     // adoptions in Mission Control.
-    const adopted = body.flags.includes(ADOPTION_FLAG);
-    if (adopted) {
-      const { count, error: countErr } = await admin
-        .from('bee_client_events')
-        .select('id', { count: 'exact', head: true })
-        .eq('agent_id', bee.agent_id)
-        .eq('event', 'adoption_l1');
-
-      if (countErr) {
-        // Audit reads must not fail a heartbeat; the bee is alive either way.
-        console.error('antenna: adoption_l1 lookup failed', countErr.message);
-      } else if ((count ?? 0) === 0) {
-        await writeBeeEvent({
-          event: 'adoption_l1',
-          agentId: bee.agent_id,
-          ip,
-          detail: { client_version: body.client_version, layer: 'L1', via: 'heartbeat_flag' },
-        });
+    // FIND-ADOPT-1 — insert and let the database arbitrate, rather than counting
+    // first. bee_client_events_one_adoption_per_agent turns the second attempt into
+    // a 23505, which recordAdoptionOnce reports as 'already'. That is success:
+    // adoption is a state, and the state is what the bee asked for.
+    //
+    // The heartbeat answers 200 in all three cases. A bee that cannot get its
+    // adoption recorded is still alive, still polling, and still adopted locally —
+    // the line is already in its own file by its own hand. Failing the heartbeat
+    // would take the pipe down over an audit row.
+    if (body.flags.includes(ADOPTION_FLAG)) {
+      const outcome = await recordAdoptionOnce({
+        agentId: bee.agent_id,
+        ip,
+        detail: { client_version: body.client_version, layer: 'L1', via: 'heartbeat_flag' },
+      });
+      if (outcome === 'failed') {
+        console.error('antenna: could not record adoption_l1 for', bee.agent_id);
       }
     }
 
