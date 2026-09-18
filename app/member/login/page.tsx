@@ -17,14 +17,29 @@ export default function MemberLoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (e: React.FormEvent) => {
+  const send = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
+    // Read the address from the FORM, not from React state.
+    //
+    // Browser autofill often sets input.value without firing the events React
+    // listens for, so a controlled input's state can stay empty while the field
+    // visibly contains an address. The DOM always holds what the member can
+    // actually see; React state only holds what React was told about.
+    const typed = String(new FormData(e.currentTarget).get('email') ?? '').trim();
+    if (!typed) {
+      setError('Please enter the email address on your membership.');
+      return;
+    }
+    // Keep state in step so the confirmation panel shows the address back.
+    setEmail(typed);
+
     setBusy(true);
     setError(null);
     try {
       const supabase = createClient();
       const { error: err } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
+        email: typed,
         options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/member` },
       });
       if (err) throw new Error(err.message);
@@ -61,16 +76,21 @@ export default function MemberLoginPage() {
           </label>
           <input
             id="email"
+            name="email"
             type="email"
             required
             autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            defaultValue={email}
             style={{ width: '100%', padding: '12px 14px', fontSize: 15, border: '1px solid rgba(0,0,0,0.2)', borderRadius: 8, marginBottom: 16 }}
           />
+          {/* disabled ONLY while a request is in flight. Gating on React state
+              meant an autofilled field left the button disabled, so the click
+              never became a submit event: no request, and no error either,
+              because no handler ran. `required` plus type="email" gives the
+              native empty/!valid check, and the handler re-checks. */}
           <button
             type="submit"
-            disabled={busy || email.trim().length === 0}
+            disabled={busy}
             style={{ width: '100%', padding: '12px 16px', fontSize: 15, borderRadius: 8, cursor: busy ? 'wait' : 'pointer' }}
           >
             {busy ? 'Sending…' : 'Send me a sign-in link'}
