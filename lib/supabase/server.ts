@@ -15,6 +15,18 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
+/**
+ * FIND-POLL-CACHE — the member lane needs the same treatment as the bee lane.
+ *
+ * getUser() revalidates the JWT with Supabase over fetch. Memoized, it would keep
+ * answering from a cached response, so a member who signed out — or whose account
+ * changed — could keep resolving to a valid session. Session checks must not be
+ * served from a cache.
+ */
+function uncachedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, { ...init, cache: 'no-store' });
+}
+
 function env(): { url: string; anonKey: string } {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -29,6 +41,7 @@ export function createSessionClient() {
   const { url, anonKey } = env();
   const store = cookies();
   return createServerClient(url, anonKey, {
+    global: { fetch: uncachedFetch },
     cookies: {
       getAll: () => store.getAll().map((c) => ({ name: c.name, value: c.value })),
       setAll: (list: { name: string; value: string; options: CookieOptions }[]) => {
@@ -43,6 +56,7 @@ export function createReadOnlySessionClient() {
   const { url, anonKey } = env();
   const store = cookies();
   return createServerClient(url, anonKey, {
+    global: { fetch: uncachedFetch },
     cookies: {
       getAll: () => store.getAll().map((c) => ({ name: c.name, value: c.value })),
       setAll: () => {

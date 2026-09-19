@@ -32,6 +32,12 @@ const VERIFIER = 'verifyBeeToken';
 // Nikita ruling, not a commit.
 const MINTS_TOKENS = new Set(['app/api/bee/activate/route.ts']);
 
+// FIND-POLL-CACHE — every bee route must declare that its fetches are not cached.
+// A route added later without these would silently reintroduce the frozen-cursor
+// bug, and the symptom (a poll that returns nothing at one cursor and the right
+// thing at cursor±1) is not something anyone would guess at from the outside.
+const REQUIRED_EXPORTS = ['runtime', 'dynamic', 'fetchCache', 'revalidate'];
+
 function walk(dir) {
   let out = [];
   let entries;
@@ -63,6 +69,16 @@ const exempt = [];
 for (const file of routeFiles) {
   const src = readFileSync(file, 'utf8');
   const rel = relative(ROOT, file).split(sep).join('/');
+
+  // Cache posture is checked FIRST, before the minting exemption, because the
+  // exemption is only about the verifier. /activate needs these exports exactly as
+  // much as the others — it reads join_tokens and agents through the same client.
+  // Every bee route, minting or verifying, must declare its cache posture.
+  for (const name of REQUIRED_EXPORTS) {
+    if (!new RegExp(`^export const ${name}\\s*=`, 'm').test(src)) {
+      failures.push({ rel, why: `does not export const ${name} — see FIND-POLL-CACHE` });
+    }
+  }
 
   if (MINTS_TOKENS.has(rel)) {
     // Still checked, just for the opposite property: a minting route must not
