@@ -15,6 +15,13 @@ import { ownedAgentId, resolveMemberSession } from '@/lib/antenna/member';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// FIND-POLL-CACHE — 'force-dynamic' governs how the ROUTE is rendered and
+// revalidated. It does not stop Next.js serving an individual fetch inside the
+// handler from the Data Cache, which is what froze /poll at an already-seen
+// cursor. These two make the route's own fetch policy explicit; the request-level
+// cache: 'no-store' in the supabase clients is the layer that actually holds.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   try {
