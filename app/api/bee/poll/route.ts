@@ -55,11 +55,17 @@ export async function GET(req: NextRequest) {
     const chamberId = await getOwnChamberId(bee.agent_id);
 
     // ---- own chamber ------------------------------------------------------
+    // FIND-POLL-SELF-1 — never hand a bee its own words back. Without the neq,
+    // every reply the bee posted returned on the next poll as a new item: the
+    // client would frame it, deliver it to the agent, and the agent would answer
+    // its own answer. Filtered server-side rather than in the client, so a bee
+    // running an older Antenna is protected too, and so no client can opt out.
     const { data: msgs, error: msgErr } = await admin
       .from('messages')
       .select('id, content, created_at, agent_id')
       .eq('honeycomb_id', chamberId)
       .eq('moderation_status', 'approved')
+      .neq('agent_id', bee.agent_id)
       .gt('created_at', sinceIso)
       .order('created_at', { ascending: true })
       .limit(PAGE_LIMIT);
