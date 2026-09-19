@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.2.1"
+CLIENT_VERSION = "0.2.2"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -86,12 +86,22 @@ def config_tmp_path() -> Path:
 
 
 def iso_to_cursor(posted_at: str) -> Optional[int]:
-    """Cursor is epoch milliseconds of posted_at, matching the poll route (§4)."""
+    """The cursor to hold after an item stamped posted_at: the FIRST UNSEEN
+    millisecond, i.e. floor(ms) + 1.
+
+    FIND-CURSOR-PRECISION. This has to agree with the server exactly, because both
+    sides compute a ceiling from the same item and the lanes filter with >=. The
+    server sends posted_at already truncated to milliseconds, so the floor here is
+    a formality that also protects against an older route sending microseconds.
+
+    Without the +1 the last item of every page came back on the next poll — a
+    chamber reply was delivered three minutes running.
+    """
     if not posted_at:
         return None
     try:
         text = posted_at.replace("Z", "+00:00")
-        return int(datetime.fromisoformat(text).timestamp() * 1000)
+        return int(datetime.fromisoformat(text).timestamp() * 1000) + 1
     except (ValueError, TypeError):
         return None
 
@@ -1096,7 +1106,11 @@ def cmd_join(token: str, api_base: str, mode: str, invoke: Optional[str]) -> int
         "poll_seconds": int(body.get("next_poll_seconds", 60)),
         "mode": mode,
         "invoke": {"command": default_invoke, "timeout_seconds": 300},
-        "cursor": 0,
+        # FIND-CURSOR-0 — start where the colony says, not at the beginning of
+        # time. Writing 0 here replayed the chamber's whole history into the agent
+        # on the first poll. Falls back to this machine's clock only if the route
+        # did not send one.
+        "cursor": int(body.get("cursor") or (time.time() * 1000)),
         "client_version": CLIENT_VERSION,
     }
     save_config(cfg)

@@ -110,6 +110,15 @@ export async function POST(req: NextRequest) {
         bee_name: beeName,
         inbox: deriveInbox(beeName),
         next_poll_seconds: nextPollSeconds((agent as { status?: string } | null)?.status),
+        // FIND-CURSOR-0 — a bee starts from its activation moment, not from the
+        // beginning of time. The client used to write cursor 0, so a bee joining a
+        // chamber that already held a coach's welcome, a census and a week of staff
+        // posts replayed all of it into the agent's runtime on its first poll.
+        //
+        // The server supplies it rather than the client, so every bee agrees with
+        // the colony's clock instead of its own machine's. The client falls back to
+        // its local now() only if this field is missing (an older route).
+        cursor: Date.now(),
       },
       { status: 200 },
     );

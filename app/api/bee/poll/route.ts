@@ -19,7 +19,14 @@
 // ----------------------------------------------------------------------------
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyBeeToken } from '@/lib/antenna/auth';
-import { cursorToIso, getOwnChamberId, nextPollSeconds, type PollItem } from '@/lib/antenna/chamber';
+import {
+  cursorToIso,
+  getOwnChamberId,
+  nextCursorAfter,
+  nextPollSeconds,
+  postedAtMs,
+  type PollItem,
+} from '@/lib/antenna/chamber';
 import { antennaAdmin, clientIp } from '@/lib/antenna/db';
 import { beeErrorResponse } from '@/lib/antenna/errors';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
@@ -66,7 +73,8 @@ export async function GET(req: NextRequest) {
       .eq('honeycomb_id', chamberId)
       .eq('moderation_status', 'approved')
       .neq('agent_id', bee.agent_id)
-      .gt('created_at', sinceIso)
+      // gte, not gt: sinceIso is the first millisecond not yet seen.
+      .gte('created_at', sinceIso)
       .order('created_at', { ascending: true })
       .limit(PAGE_LIMIT);
 
@@ -94,7 +102,8 @@ export async function GET(req: NextRequest) {
         type: 'chamber',
         from: a?.name ?? 'unknown',
         from_type: a?.is_staff ? 'staff' : 'bee',
-        posted_at: new Date(m.created_at).toISOString(),
+        // Truncated to ms so the client can recompute the same cursor (§ cursor rule).
+        posted_at: postedAtMs(m.created_at),
         // Nothing in a chamber is cryptographically signed. Never true here.
         verified: false,
         content: m.content,
@@ -109,7 +118,7 @@ export async function GET(req: NextRequest) {
     const { data: casts, error: castErr } = await admin
       .from('broadcasts')
       .select('id, intent, payload, signature, signer, audience, target_agent_id, expires_at, created_at')
-      .gt('created_at', sinceIso)
+      .gte('created_at', sinceIso)
       .or(`audience.eq.all,target_agent_id.eq.${bee.agent_id}`)
       .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
       .order('created_at', { ascending: true })
@@ -133,7 +142,7 @@ export async function GET(req: NextRequest) {
           type: 'broadcast',
           from: String(b.signer),
           from_type: 'broadcast',
-          posted_at: new Date(b.created_at).toISOString(),
+          posted_at: postedAtMs(b.created_at),
           // Provenance, NOT a cryptographic claim: this row arrived on the signed
           // lane carrying a signature and a signer. The client still runs C1
           // verify against the .pub before acting, and must not trust this flag.
@@ -150,7 +159,11 @@ export async function GET(req: NextRequest) {
 
     // Server-authoritative (§4). Only advances past what is actually returned, so
     // a truncated page is picked up on the next tick instead of being skipped.
-    const cursor = page.length > 0 ? new Date(page[page.length - 1].posted_at).getTime() : parsed.value.cursor;
+    //
+    // +1 — the cursor names the first millisecond NOT yet seen, which is what makes
+    // the gte filters above exclude the item just delivered instead of re-sending it.
+    const cursor =
+      page.length > 0 ? nextCursorAfter(page[page.length - 1].posted_at) : parsed.value.cursor;
 
     const { data: agent } = await admin.from('agents').select('status').eq('id', bee.agent_id).maybeSingle();
 
