@@ -9,6 +9,9 @@ function getSupabase() {
   );
 }
 
+/** Canonical 8-4-4-4-12 hex form, case-insensitive. Any version or variant. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: NextRequest) {
   const supabase = getSupabase();
   try {
@@ -65,6 +68,15 @@ export async function POST(request: NextRequest) {
     let honeycomb: { id: string; title: string; type: string; creator_id: string } | null = null;
 
     if (honeycomb_id) {
+      // Nikita RESPONDER-001 LOW — validate the shape before Postgres sees it.
+      // .eq('id', 'not-a-uuid') makes Postgres raise 22P02 (invalid input syntax
+      // for type uuid); supabase-js surfaces that as an error, data comes back
+      // null, and the caller got a 404 "Honeycomb not found" — which says the
+      // chamber does not exist when the truth is that the id was never an id.
+      // A caller debugging a 404 looks in the wrong place entirely.
+      if (!UUID_RE.test(honeycomb_id)) {
+        return NextResponse.json({ error: 'honeycomb_id must be a UUID' }, { status: 400 });
+      }
       const { data } = await supabase
         .from('honeycombs')
         .select('id, title, type, creator_id')
