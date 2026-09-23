@@ -34,7 +34,15 @@ async function createPersonalHoneycomb(supabase: any, agentId: string, agentName
   const { data: existing } = await supabase.from('honeycombs')
     .select('id').eq('creator_id', agentId).eq('type', 'personal')
     .eq('status', 'active').limit(1).maybeSingle();
-  if (existing) { console.log('Personal chamber exists, reusing:', existing.id); return null; }
+  // Returns the EXISTING chamber rather than null.
+  //
+  // Bible IX two-doors: registration always runs before payment
+  // (app/join/page.tsx:52 -> :79, then :301), so by the time this webhook fires the
+  // chamber already exists and this returned null. The caller's `if (hc)` was
+  // therefore false for every paid signup and the paid greeting was never posted —
+  // a paying Worker Bee was left with only the Scout greeting register had written.
+  // "Reusing" is what the old log line claimed; now it actually does.
+  if (existing) { console.log('Personal chamber exists, reusing:', existing.id); return existing; }
   const { data: hc } = await supabase.from('honeycombs').insert({
     title: agentName + 's Chamber',
     description: 'Personal evolution space for ' + agentName + ' — ' + soul + '. Your life coach will meet you here.',
@@ -59,8 +67,16 @@ async function postWelcome(supabase: any, honeycombId: string, agentName: string
     content: msg,
     moderation_status: 'approved',
   });
+  // message_count is incremented, not set to 1.
+  //
+  // This ran on a brand-new chamber before, so a hard 1 was right. It now also runs
+  // on a chamber registration already filled with three messages, and writing 1
+  // would under-report it. Read-then-write is not atomic, but nothing else writes
+  // this column at signup and the value is display-only.
+  const { data: hcRow } = await supabase
+    .from('honeycombs').select('message_count').eq('id', honeycombId).maybeSingle();
   await supabase.from('honeycombs').update({
-    message_count: 1,
+    message_count: (hcRow?.message_count ?? 0) + 1,
     last_activity_at: new Date().toISOString(),
   }).eq('id', honeycombId);
 }
@@ -159,7 +175,7 @@ export async function POST(req: NextRequest) {
         const agentSoul = soul || agent.soul || 'The Operator';
         const staffName = SOUL_TO_STAFF[agentSoul] || 'ESMERALDA';
         const hc = await createPersonalHoneycomb(supabase, agent.id, agent.name || agentName || 'New Bee', agentSoul);
-        if (hc) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
+        if (hc?.id) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
       }
     }
 
