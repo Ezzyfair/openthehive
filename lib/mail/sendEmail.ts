@@ -6,7 +6,10 @@ import { Resend } from 'resend';
 type SendArgs = {
   supabase: any;
   to: string;
-  category: 'receipt' | 'marketing';
+  // 'operational' is colony-internal mail — a quarantine alert, not something a member
+  // asked for. It still passes the suppression wall below and is still logged to
+  // email_sends, because one door means one door.
+  category: 'receipt' | 'marketing' | 'operational';
   template: string;
   subject: string;
   html: string;

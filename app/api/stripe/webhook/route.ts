@@ -147,11 +147,9 @@ async function alertQuarantine(
     '</div>',
   ].join('');
   try {
-    // category is 'receipt' because SendArgs allows only 'receipt' | 'marketing'. An
-    // operational alert is neither; widening that union is a change to the shared mail
-    // door and belongs in its own ticket, not here.
+    // 'operational': colony-internal mail, neither a receipt nor marketing.
     await sendEmail({
-      supabase, to, category: 'receipt', template: 'stripe_webhook_quarantine_v1', subject, html,
+      supabase, to, category: 'operational', template: 'stripe_webhook_quarantine_v1', subject, html,
     });
   } catch (e: any) {
     console.error('stripe webhook: quarantine alert email threw', {
