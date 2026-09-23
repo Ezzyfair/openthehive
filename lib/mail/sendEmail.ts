@@ -6,10 +6,15 @@ import { Resend } from 'resend';
 type SendArgs = {
   supabase: any;
   to: string;
-  // 'operational' is colony-internal mail — a quarantine alert, not something a member
-  // asked for. It still passes the suppression wall below and is still logged to
-  // email_sends, because one door means one door.
-  category: 'receipt' | 'marketing' | 'operational';
+  // The four values email_sends.category accepts, verified against the live constraint
+  // email_sends_category_check on Sept 22 (NIK-TWO-DOORS-001).
+  //   'operational' — colony-internal mail, a quarantine alert; not something a member
+  //                   asked for. Still passes the suppression wall below and is still
+  //                   logged to email_sends, because one door means one door.
+  //   'flight'      — allowed by the live constraint before this ticket. Nothing in this
+  //                   repo sends it; it is listed so the type matches the table rather
+  //                   than being quietly narrower than the DB.
+  category: 'receipt' | 'marketing' | 'flight' | 'operational';
   template: string;
   subject: string;
   html: string;
