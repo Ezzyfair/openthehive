@@ -126,6 +126,42 @@ export async function POST(req: NextRequest) {
 
   const supabase = getSupabase();
 
+  // ── CLAIM THE EVENT BEFORE ANY WORK (NIK-TWO-DOORS-001 HIGH) ────────────────
+  // A valid Stripe signature stays valid on every replay, so the signature check
+  // above is not an idempotency gate. Stripe's at-least-once retry — or a replayed
+  // capture — used to run this whole handler again.
+  //
+  // The ROW IS THE CLAIM. One INSERT against stripe_events.event_id PRIMARY KEY,
+  // and no read-before-write: a SELECT then an INSERT is itself a race under
+  // concurrent delivery, so only the unique index can settle it.
+  //
+  // Placed before every dispatch on purpose — it covers the branches below and any
+  // branch added later, which a per-branch guard would not.
+  const { error: claimError } = await supabase
+    .from('stripe_events')
+    .insert({ event_id: event.id, event_type: event.type });
+  if (claimError) {
+    if (claimError.code === '23505') {
+      // Already processed. 200, not 409: Stripe reads any 2xx as delivered and stops
+      // retrying, and "I have already done this" is a success, not a client error.
+      console.log('stripe webhook: already processed, skipping', {
+        event_id: event.id,
+        event_type: event.type,
+      });
+      return NextResponse.json({ received: true, already_processed: true }, { status: 200 });
+    }
+    // Anything else and we cannot tell a new event from a replay — most likely
+    // 42P01, the migration not yet run. Fail CLOSED: Stripe retries, which costs a
+    // retry. Failing open double-pays, and a double cascade moves money.
+    console.error('stripe webhook: event claim failed, refusing to process', {
+      event_id: event.id,
+      event_type: event.type,
+      code: claimError.code,
+      message: claimError.message,
+    });
+    return NextResponse.json({ error: 'event claim unavailable' }, { status: 500 });
+  }
+
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
     const { tier, agentName, soul, agent_id: metaAgentId } = (session.metadata || {}) as any;
