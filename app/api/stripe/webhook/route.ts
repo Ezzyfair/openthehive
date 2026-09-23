@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { canonicalTier } from '@/lib/tier';
 import { recordSubscriptionEarnings } from '@/lib/referral-engine';
+import { sendEmail } from '@/lib/mail/sendEmail';
 
 function getSupabase() {
   return createClient(
@@ -80,6 +81,83 @@ async function postWelcome(supabase: any, honeycombId: string, agentName: string
     message_count: (hcRow?.message_count ?? 0) + 1,
     last_activity_at: new Date().toISOString(),
   }).eq('id', honeycombId);
+}
+
+/**
+ * Quarantine record (NIK-TWO-DOORS-001 MEDIUM). BEST-EFFORT BY DESIGN: every failure
+ * here is swallowed and logged. The alert must never be the reason a webhook fails —
+ * an event we could not classify is already bad news, and turning that into a 500 would
+ * make Stripe retry something a retry cannot fix.
+ */
+async function recordWebhookFailure(
+  supabase: any,
+  row: { event_id: string; event_type: string; reason: string; detail?: any },
+) {
+  try {
+    const { error } = await supabase.from('stripe_webhook_failures').insert(row);
+    if (error) {
+      console.error('stripe webhook: quarantine row FAILED', {
+        event_id: row.event_id, reason: row.reason, code: error.code, message: error.message,
+      });
+      return false;
+    }
+    return true;
+  } catch (e: any) {
+    console.error('stripe webhook: quarantine row threw', { event_id: row.event_id, error: e?.message });
+    return false;
+  }
+}
+
+/**
+ * The alert. Recipient comes from HIVE_ALERT_EMAIL — no address is hardcoded here, so
+ * the recipient is an environment decision and this file can be read in public.
+ * Unset env, a suppressed address, missing mail env, or a throwing provider all end the
+ * same way: a console line and a return. The webhook's answer never depends on it.
+ */
+async function alertQuarantine(
+  supabase: any,
+  args: { event_id: string; event_type: string; session_id: string; received: string },
+) {
+  const to = process.env.HIVE_ALERT_EMAIL;
+  if (!to) {
+    console.error('stripe webhook: HIVE_ALERT_EMAIL unset — quarantine row written, no email sent', {
+      event_id: args.event_id,
+    });
+    return;
+  }
+  const subject = 'The Hive — Stripe webhook quarantined: unrecognised tier';
+  const html = [
+    '<div style="font-family:Georgia,serif;max-width:640px;">',
+    '<h2>Stripe webhook quarantined</h2>',
+    '<p>A checkout completed at Stripe that the colony could not classify. The payment is',
+    ' safe at Stripe. Nothing was written to members or agents, and no cascade fired.</p>',
+    '<ul>',
+    '<li><b>event id</b>: ' + args.event_id + '</li>',
+    '<li><b>event type</b>: ' + args.event_type + '</li>',
+    '<li><b>stripe session</b>: ' + args.session_id + '</li>',
+    '<li><b>metadata.tier received</b>: ' + args.received + '</li>',
+    '<li><b>accepted</b>: worker, honey, queens</li>',
+    '</ul>',
+    '<p>The event is claimed, so Stripe will not retry it. Resolve it by hand, then set',
+    ' resolved_at. Find the row with:</p>',
+    '<pre>SELECT * FROM stripe_webhook_failures WHERE event_id = \'' + args.event_id + '\';</pre>',
+    '<p>Everything still open:</p>',
+    '<pre>SELECT id, event_id, event_type, reason, detail, created_at',
+    '  FROM stripe_webhook_failures WHERE resolved_at IS NULL ORDER BY created_at DESC;</pre>',
+    '</div>',
+  ].join('');
+  try {
+    // category is 'receipt' because SendArgs allows only 'receipt' | 'marketing'. An
+    // operational alert is neither; widening that union is a change to the shared mail
+    // door and belongs in its own ticket, not here.
+    await sendEmail({
+      supabase, to, category: 'receipt', template: 'stripe_webhook_quarantine_v1', subject, html,
+    });
+  } catch (e: any) {
+    console.error('stripe webhook: quarantine alert email threw', {
+      event_id: args.event_id, error: e?.message,
+    });
+  }
 }
 
 /**
@@ -159,6 +237,16 @@ export async function POST(req: NextRequest) {
       code: claimError.code,
       message: claimError.message,
     });
+    // Best-effort record of the refusal. Likely to fail too — if stripe_events is
+    // missing, stripe_webhook_failures probably is as well — which is exactly why it is
+    // swallowed. No email here: a claim failure repeats on every Stripe retry, and an
+    // alert that fires on every retry is an alert nobody reads.
+    await recordWebhookFailure(supabase, {
+      event_id: event.id,
+      event_type: event.type,
+      reason: 'claim_failed',
+      detail: { code: claimError.code, message: claimError.message },
+    });
     return NextResponse.json({ error: 'event claim unavailable' }, { status: 500 });
   }
 
@@ -175,12 +263,34 @@ export async function POST(req: NextRequest) {
     // classification, and a money path should not guess.
     const canonical = canonicalTier(tier);
     if (!canonical) {
+      const received = typeof tier === 'string' ? tier : typeof tier;
       console.error('stripe webhook: unrecognised metadata.tier on checkout.session.completed', {
-        received: typeof tier === 'string' ? tier : typeof tier,
+        event_id: event.id,
+        received,
         session: session.id,
         accepted: ['worker', 'honey', 'queens'],
       });
-      return NextResponse.json({ error: 'unrecognised tier in session metadata' }, { status: 400 });
+      // QUARANTINE, not 400 (NIK-TWO-DOORS-001 MEDIUM). The event is already claimed, so
+      // a 4xx would only make Stripe redeliver — and a retry carries the same metadata,
+      // so it cannot succeed where this one failed. Since ea5f91c those retries were
+      // answered 200 already_processed, which made the event silent and unprocessed with
+      // no record anywhere. The row and the email ARE the recovery path: the money is at
+      // Stripe, the event is written down, a human finishes it and sets resolved_at.
+      // Nothing was written to members or agents and no cascade fired — the refusal
+      // happens before any of that, and that has not changed.
+      await recordWebhookFailure(supabase, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: 'unrecognised_tier',
+        detail: { received, session: session.id, accepted: ['worker', 'honey', 'queens'] },
+      });
+      await alertQuarantine(supabase, {
+        event_id: event.id,
+        event_type: event.type,
+        session_id: session.id,
+        received,
+      });
+      return NextResponse.json({ received: true, quarantined: true }, { status: 200 });
     }
 
     if (email) {
