@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
+import { canonicalTier } from '@/lib/tier';
 import { recordSubscriptionEarnings } from '@/lib/referral-engine';
 
 function getSupabase() {
@@ -132,6 +133,20 @@ export async function POST(req: NextRequest) {
 
     let agentRecord: any = null;
 
+    // Translate Stripe's word into the colony's ONCE, here, and refuse what we
+    // cannot name. `tier || 'worker'` used to turn an absent tier into a paid
+    // Worker Bee row; an unrecognised one was written verbatim. Neither is a
+    // classification, and a money path should not guess.
+    const canonical = canonicalTier(tier);
+    if (!canonical) {
+      console.error('stripe webhook: unrecognised metadata.tier on checkout.session.completed', {
+        received: typeof tier === 'string' ? tier : typeof tier,
+        session: session.id,
+        accepted: ['worker', 'honey', 'queens'],
+      });
+      return NextResponse.json({ error: 'unrecognised tier in session metadata' }, { status: 400 });
+    }
+
     if (email) {
       let agent: any = null;
       if (metaAgentId) {
@@ -151,7 +166,7 @@ export async function POST(req: NextRequest) {
         agent_id: agent?.id || null,
         stripe_customer_id: session.customer as string,
         stripe_subscription_id: session.subscription as string,
-        tier: tier || 'worker',
+        tier: canonical,
         status: 'first_flight',
         tokens_remaining: 100000,
         tokens_reset_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -161,11 +176,12 @@ export async function POST(req: NextRequest) {
       }, { onConflict: 'email' });
 
       if (agent?.id) {
-        await supabase.from('agents').update({ status: 'first_flight', tier: tier || 'worker' }).eq('id', agent.id);
+        await supabase.from('agents').update({ status: 'first_flight', tier: canonical }).eq('id', agent.id);
         // Top up skill cohort for new tier (V4 §2.10) — idempotent, only adds new skills
         try {
-          const newTier = (tier === 'worker' ? 'worker_bee' : (tier || 'worker_bee')) as any;
-          const cohortResult = await upgradeCohortForTierChange(supabase, agent.id, newTier, agent.soul);
+          // Same map, not a second inline translation — the inline one here covered
+          // only 'worker' and left 'honey' and 'queens' untranslated.
+          const cohortResult = await upgradeCohortForTierChange(supabase, agent.id, canonical, agent.soul);
           if (!cohortResult.success) {
             console.error('Cohort upgrade had errors:', cohortResult.errors);
           }
