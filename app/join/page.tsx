@@ -70,6 +70,17 @@ function JoinForm() {
           soul_emoji: soul?.emoji,
           color: soul?.color,
           referred_by_code: referredByCode,
+          // The chosen door, for COPY only — register never grants privilege from
+          // it (see app/api/agents/register/route.ts).
+          //
+          // This sends the RAW ?tier= param, not the defaulted `tier` on L28. L28 is
+          // `searchParams.get('tier') || 'worker'`, so the default makes a deliberate
+          // Worker Bee click indistinguishable from someone who just opened /join —
+          // and the only tier-bearing link in the app is pricing/page.tsx:69, which
+          // has no Scout card. Sending the defaulted value would mark every visitor
+          // as paid and nobody would ever see the Scout copy. Absent means "no door
+          // chosen yet", which is what a free-trial arrival actually is.
+          tier: searchParams.get('tier'),
         }),
       });
       const data = await res.json();
