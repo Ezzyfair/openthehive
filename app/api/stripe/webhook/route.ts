@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
+import { canonicalTier } from '@/lib/tier';
 import { recordSubscriptionEarnings } from '@/lib/referral-engine';
+import { sendEmail } from '@/lib/mail/sendEmail';
 
 function getSupabase() {
   return createClient(
@@ -34,7 +36,15 @@ async function createPersonalHoneycomb(supabase: any, agentId: string, agentName
   const { data: existing } = await supabase.from('honeycombs')
     .select('id').eq('creator_id', agentId).eq('type', 'personal')
     .eq('status', 'active').limit(1).maybeSingle();
-  if (existing) { console.log('Personal chamber exists, reusing:', existing.id); return null; }
+  // Returns the EXISTING chamber rather than null.
+  //
+  // Bible IX two-doors: registration always runs before payment
+  // (app/join/page.tsx:52 -> :79, then :301), so by the time this webhook fires the
+  // chamber already exists and this returned null. The caller's `if (hc)` was
+  // therefore false for every paid signup and the paid greeting was never posted —
+  // a paying Worker Bee was left with only the Scout greeting register had written.
+  // "Reusing" is what the old log line claimed; now it actually does.
+  if (existing) { console.log('Personal chamber exists, reusing:', existing.id); return existing; }
   const { data: hc } = await supabase.from('honeycombs').insert({
     title: agentName + 's Chamber',
     description: 'Personal evolution space for ' + agentName + ' — ' + soul + '. Your life coach will meet you here.',
@@ -59,10 +69,93 @@ async function postWelcome(supabase: any, honeycombId: string, agentName: string
     content: msg,
     moderation_status: 'approved',
   });
+  // message_count is incremented, not set to 1.
+  //
+  // This ran on a brand-new chamber before, so a hard 1 was right. It now also runs
+  // on a chamber registration already filled with three messages, and writing 1
+  // would under-report it. Read-then-write is not atomic, but nothing else writes
+  // this column at signup and the value is display-only.
+  const { data: hcRow } = await supabase
+    .from('honeycombs').select('message_count').eq('id', honeycombId).maybeSingle();
   await supabase.from('honeycombs').update({
-    message_count: 1,
+    message_count: (hcRow?.message_count ?? 0) + 1,
     last_activity_at: new Date().toISOString(),
   }).eq('id', honeycombId);
+}
+
+/**
+ * Quarantine record (NIK-TWO-DOORS-001 MEDIUM). BEST-EFFORT BY DESIGN: every failure
+ * here is swallowed and logged. The alert must never be the reason a webhook fails —
+ * an event we could not classify is already bad news, and turning that into a 500 would
+ * make Stripe retry something a retry cannot fix.
+ */
+async function recordWebhookFailure(
+  supabase: any,
+  row: { event_id: string; event_type: string; reason: string; detail?: any },
+) {
+  try {
+    const { error } = await supabase.from('stripe_webhook_failures').insert(row);
+    if (error) {
+      console.error('stripe webhook: quarantine row FAILED', {
+        event_id: row.event_id, reason: row.reason, code: error.code, message: error.message,
+      });
+      return false;
+    }
+    return true;
+  } catch (e: any) {
+    console.error('stripe webhook: quarantine row threw', { event_id: row.event_id, error: e?.message });
+    return false;
+  }
+}
+
+/**
+ * The alert. Recipient comes from HIVE_ALERT_EMAIL — no address is hardcoded here, so
+ * the recipient is an environment decision and this file can be read in public.
+ * Unset env, a suppressed address, missing mail env, or a throwing provider all end the
+ * same way: a console line and a return. The webhook's answer never depends on it.
+ */
+async function alertQuarantine(
+  supabase: any,
+  args: { event_id: string; event_type: string; session_id: string; received: string },
+) {
+  const to = process.env.HIVE_ALERT_EMAIL;
+  if (!to) {
+    console.error('stripe webhook: HIVE_ALERT_EMAIL unset — quarantine row written, no email sent', {
+      event_id: args.event_id,
+    });
+    return;
+  }
+  const subject = 'The Hive — Stripe webhook quarantined: unrecognised tier';
+  const html = [
+    '<div style="font-family:Georgia,serif;max-width:640px;">',
+    '<h2>Stripe webhook quarantined</h2>',
+    '<p>A checkout completed at Stripe that the colony could not classify. The payment is',
+    ' safe at Stripe. Nothing was written to members or agents, and no cascade fired.</p>',
+    '<ul>',
+    '<li><b>event id</b>: ' + args.event_id + '</li>',
+    '<li><b>event type</b>: ' + args.event_type + '</li>',
+    '<li><b>stripe session</b>: ' + args.session_id + '</li>',
+    '<li><b>metadata.tier received</b>: ' + args.received + '</li>',
+    '<li><b>accepted</b>: worker, honey, queens</li>',
+    '</ul>',
+    '<p>The event is claimed, so Stripe will not retry it. Resolve it by hand, then set',
+    ' resolved_at. Find the row with:</p>',
+    '<pre>SELECT * FROM stripe_webhook_failures WHERE event_id = \'' + args.event_id + '\';</pre>',
+    '<p>Everything still open:</p>',
+    '<pre>SELECT id, event_id, event_type, reason, detail, created_at',
+    '  FROM stripe_webhook_failures WHERE resolved_at IS NULL ORDER BY created_at DESC;</pre>',
+    '</div>',
+  ].join('');
+  try {
+    // 'operational': colony-internal mail, neither a receipt nor marketing.
+    await sendEmail({
+      supabase, to, category: 'operational', template: 'stripe_webhook_quarantine_v1', subject, html,
+    });
+  } catch (e: any) {
+    console.error('stripe webhook: quarantine alert email threw', {
+      event_id: args.event_id, error: e?.message,
+    });
+  }
 }
 
 /**
@@ -109,12 +202,94 @@ export async function POST(req: NextRequest) {
 
   const supabase = getSupabase();
 
+  // ── CLAIM THE EVENT BEFORE ANY WORK (NIK-TWO-DOORS-001 HIGH) ────────────────
+  // A valid Stripe signature stays valid on every replay, so the signature check
+  // above is not an idempotency gate. Stripe's at-least-once retry — or a replayed
+  // capture — used to run this whole handler again.
+  //
+  // The ROW IS THE CLAIM. One INSERT against stripe_events.event_id PRIMARY KEY,
+  // and no read-before-write: a SELECT then an INSERT is itself a race under
+  // concurrent delivery, so only the unique index can settle it.
+  //
+  // Placed before every dispatch on purpose — it covers the branches below and any
+  // branch added later, which a per-branch guard would not.
+  const { error: claimError } = await supabase
+    .from('stripe_events')
+    .insert({ event_id: event.id, event_type: event.type });
+  if (claimError) {
+    if (claimError.code === '23505') {
+      // Already processed. 200, not 409: Stripe reads any 2xx as delivered and stops
+      // retrying, and "I have already done this" is a success, not a client error.
+      console.log('stripe webhook: already processed, skipping', {
+        event_id: event.id,
+        event_type: event.type,
+      });
+      return NextResponse.json({ received: true, already_processed: true }, { status: 200 });
+    }
+    // Anything else and we cannot tell a new event from a replay — most likely
+    // 42P01, the migration not yet run. Fail CLOSED: Stripe retries, which costs a
+    // retry. Failing open double-pays, and a double cascade moves money.
+    console.error('stripe webhook: event claim failed, refusing to process', {
+      event_id: event.id,
+      event_type: event.type,
+      code: claimError.code,
+      message: claimError.message,
+    });
+    // Best-effort record of the refusal. Likely to fail too — if stripe_events is
+    // missing, stripe_webhook_failures probably is as well — which is exactly why it is
+    // swallowed. No email here: a claim failure repeats on every Stripe retry, and an
+    // alert that fires on every retry is an alert nobody reads.
+    await recordWebhookFailure(supabase, {
+      event_id: event.id,
+      event_type: event.type,
+      reason: 'claim_failed',
+      detail: { code: claimError.code, message: claimError.message },
+    });
+    return NextResponse.json({ error: 'event claim unavailable' }, { status: 500 });
+  }
+
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
     const { tier, agentName, soul, agent_id: metaAgentId } = (session.metadata || {}) as any;
     const email = session.customer_email || session.customer_details?.email;
 
     let agentRecord: any = null;
+
+    // Translate Stripe's word into the colony's ONCE, here, and refuse what we
+    // cannot name. `tier || 'worker'` used to turn an absent tier into a paid
+    // Worker Bee row; an unrecognised one was written verbatim. Neither is a
+    // classification, and a money path should not guess.
+    const canonical = canonicalTier(tier);
+    if (!canonical) {
+      const received = typeof tier === 'string' ? tier : typeof tier;
+      console.error('stripe webhook: unrecognised metadata.tier on checkout.session.completed', {
+        event_id: event.id,
+        received,
+        session: session.id,
+        accepted: ['worker', 'honey', 'queens'],
+      });
+      // QUARANTINE, not 400 (NIK-TWO-DOORS-001 MEDIUM). The event is already claimed, so
+      // a 4xx would only make Stripe redeliver — and a retry carries the same metadata,
+      // so it cannot succeed where this one failed. Since ea5f91c those retries were
+      // answered 200 already_processed, which made the event silent and unprocessed with
+      // no record anywhere. The row and the email ARE the recovery path: the money is at
+      // Stripe, the event is written down, a human finishes it and sets resolved_at.
+      // Nothing was written to members or agents and no cascade fired — the refusal
+      // happens before any of that, and that has not changed.
+      await recordWebhookFailure(supabase, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: 'unrecognised_tier',
+        detail: { received, session: session.id, accepted: ['worker', 'honey', 'queens'] },
+      });
+      await alertQuarantine(supabase, {
+        event_id: event.id,
+        event_type: event.type,
+        session_id: session.id,
+        received,
+      });
+      return NextResponse.json({ received: true, quarantined: true }, { status: 200 });
+    }
 
     if (email) {
       let agent: any = null;
@@ -135,7 +310,7 @@ export async function POST(req: NextRequest) {
         agent_id: agent?.id || null,
         stripe_customer_id: session.customer as string,
         stripe_subscription_id: session.subscription as string,
-        tier: tier || 'worker',
+        tier: canonical,
         status: 'first_flight',
         tokens_remaining: 100000,
         tokens_reset_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
@@ -145,11 +320,12 @@ export async function POST(req: NextRequest) {
       }, { onConflict: 'email' });
 
       if (agent?.id) {
-        await supabase.from('agents').update({ status: 'first_flight', tier: tier || 'worker' }).eq('id', agent.id);
+        await supabase.from('agents').update({ status: 'first_flight', tier: canonical }).eq('id', agent.id);
         // Top up skill cohort for new tier (V4 §2.10) — idempotent, only adds new skills
         try {
-          const newTier = (tier === 'worker' ? 'worker_bee' : (tier || 'worker_bee')) as any;
-          const cohortResult = await upgradeCohortForTierChange(supabase, agent.id, newTier, agent.soul);
+          // Same map, not a second inline translation — the inline one here covered
+          // only 'worker' and left 'honey' and 'queens' untranslated.
+          const cohortResult = await upgradeCohortForTierChange(supabase, agent.id, canonical, agent.soul);
           if (!cohortResult.success) {
             console.error('Cohort upgrade had errors:', cohortResult.errors);
           }
@@ -159,7 +335,7 @@ export async function POST(req: NextRequest) {
         const agentSoul = soul || agent.soul || 'The Operator';
         const staffName = SOUL_TO_STAFF[agentSoul] || 'ESMERALDA';
         const hc = await createPersonalHoneycomb(supabase, agent.id, agent.name || agentName || 'New Bee', agentSoul);
-        if (hc) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
+        if (hc?.id) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
       }
     }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { STRIPE_TIER_TO_CANONICAL } from '@/lib/tier';
 import { createClient } from '@supabase/supabase-js';
 import { sendEmail } from '../../../../lib/mail/sendEmail';
 import { assignCohort } from '@/lib/cohort-assignment';
@@ -222,7 +223,7 @@ function getBriefing(soul: string, name: string, apiKey: string, coachName: stri
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, codename, human_name, specialty, bio, working_on, needs_help_with, email, eth_wallet, soul, soul_emoji, color, referred_by_code } = await req.json();
+    const { name, codename, human_name, specialty, bio, working_on, needs_help_with, email, eth_wallet, soul, soul_emoji, color, referred_by_code, tier: chosenDoor } = await req.json();
 
     if (!name || !email || !soul) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -305,6 +306,21 @@ export async function POST(req: NextRequest) {
 
     const honeycombUrl = hc ? 'https://openthehive.ai/honeycombs/' + hc.id : 'https://openthehive.ai/honeycombs';
 
+    // ── ruling 2 · which copy this chamber opens with ─────────────────────────
+    //
+    // chosenDoor is the raw ?tier= the visitor arrived with. It is UNTRUSTED and
+    // chooses COPY ONLY — never privilege. agents.tier below is still written
+    // 'scout' for everyone, and a paid tier is only ever set by the Stripe webhook
+    // after money moves. A forged body.tier changes which sentence a bee reads and
+    // nothing else.
+    //
+    // The test is "did they express PAID intent", not "did they say scout". Only the
+    // three Stripe door keys count, because ?tier=scout is linked from nowhere:
+    // pricing/page.tsx:69 is the only tier-bearing link and it has no Scout card, so
+    // every real free arrival carries no tier at all. Testing `=== 'scout'` would
+    // make the Scout copy unreachable and hand every visitor the paid-intent line.
+    const paidIntent = typeof chosenDoor === 'string' && chosenDoor in STRIPE_TIER_TO_CANONICAL;
+
     if (hc) {
       const { data: staffAgent } = await supabase.from('agents').select('id').eq('name', staffName).single();
 
@@ -321,26 +337,44 @@ export async function POST(req: NextRequest) {
       });
 
       if (staffAgent) {
-        // Message 2: Life coach welcome
-        await supabase.from('messages').insert({
-          honeycomb_id: hc.id,
-          agent_id: staffAgent.id,
-          content: WELCOMES[staffName] || WELCOMES.ESMERALDA,
-          moderation_status: 'approved',
-        });
+        if (paidIntent) {
+          // One neutral line. No Scout welcome, no trial briefing — a paying member
+          // must never read either (ruling 2). The real greeting arrives from the
+          // Stripe webhook when payment completes, on this same chamber.
+          await supabase.from('messages').insert({
+            honeycomb_id: hc.id,
+            agent_id: staffAgent.id,
+            content: 'Your chamber is open. Your coach meets you here the moment your membership is confirmed.',
+            moderation_status: 'approved',
+          });
 
-        // Message 3: Scout trial briefing with API key
-        await supabase.from('messages').insert({
-          honeycomb_id: hc.id,
-          agent_id: staffAgent.id,
-          content: getBriefing(soul, name, '(delivered securely at signup - never by chamber message or email)', staffName),
-          moderation_status: 'approved',
-        });
+          await supabase.from('honeycombs').update({
+            message_count: 2,
+            last_activity_at: new Date().toISOString(),
+          }).eq('id', hc.id);
 
-        await supabase.from('honeycombs').update({
-          message_count: 3,
-          last_activity_at: new Date().toISOString(),
-        }).eq('id', hc.id);
+        } else {
+          // Message 2: Life coach welcome
+          await supabase.from('messages').insert({
+            honeycomb_id: hc.id,
+            agent_id: staffAgent.id,
+            content: WELCOMES[staffName] || WELCOMES.ESMERALDA,
+            moderation_status: 'approved',
+          });
+
+          // Message 3: Scout trial briefing with API key
+          await supabase.from('messages').insert({
+            honeycomb_id: hc.id,
+            agent_id: staffAgent.id,
+            content: getBriefing(soul, name, '(delivered securely at signup - never by chamber message or email)', staffName),
+            moderation_status: 'approved',
+          });
+
+          await supabase.from('honeycombs').update({
+            message_count: 3,
+            last_activity_at: new Date().toISOString(),
+          }).eq('id', hc.id);
+        }
       }
     }
 
