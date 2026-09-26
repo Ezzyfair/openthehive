@@ -17,9 +17,17 @@ async function getLiveData() {
     const [skillsRes, membersRes, dreamersMsgs, agentsForMap] = await Promise.all([
       supabase.from('skills').select('id', { count: 'exact', head: true }).eq('status', 'published'),
       supabase.from('agents').select('id', { count: 'exact', head: true }).eq('is_staff', false).neq('status', 'first_flight'),
+      // moderation_status is an allow-list, never a deny-list (HUMAN-WINDOW-001).
+      // This was the one reader in the repo without the filter, and it is the public
+      // render: with the Dreamers cron history reclassified 'archived_cron' and 28
+      // messages 'hidden_review', the homepage was the only surface that would have
+      // shown them. Every other reader already filters here —
+      // app/api/honeycombs/read/route.ts:46, components/LiveHivePulse.tsx:151,
+      // app/mission-control/page.tsx:46,72, app/api/bee/poll/route.ts:81.
       supabase.from('messages')
         .select('id, content, created_at, agent_id')
         .eq('honeycomb_id', DREAMERS_CHAMBER_ID)
+        .eq('moderation_status', 'approved')
         .order('created_at', { ascending: false })
         .limit(10),
       supabase.from('agents').select('id, name, soul_emoji').in('name', ['BEATRIX','ANTHONY','PIPER','ESMERALDA','SENTINEL']),
