@@ -1,17 +1,19 @@
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { antennaAdmin } from '@/lib/antenna/db';
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+export const runtime = 'nodejs';
+export const dynamic = "force-dynamic";
+// FIND-POLL-CACHE — this route had dynamic + revalidate only, which is exactly the
+// pair that proved insufficient: they govern how the ROUTE is rendered, not whether
+// an individual fetch inside the handler is served from the Data Cache. The
+// Cache-Control header further down is on the OUTGOING response and does nothing
+// about the inbound fetch to Supabase. antennaAdmin() carries the request-level
+// cache: 'no-store' that actually holds (HUMAN-WINDOW-001 commit 2).
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
-  const supabase = getSupabase();
+  const supabase = antennaAdmin();
   const { searchParams } = new URL(request.url);
   const title = searchParams.get('title');
   const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);

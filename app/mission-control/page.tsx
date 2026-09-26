@@ -61,7 +61,11 @@ async function getStats() {
     // Top ideas (pending + scored)
     supabase.from('nuggets').select('id, idea, reasoning, score, status, source_agent, esmeralda_plan, created_at, approved_at').order('score', { ascending: false }).limit(20),
     // Dreamers Chamber live feed
-    supabase.from('messages').select('id, content, created_at, agent_id').eq('honeycomb_id', DREAMERS_CHAMBER_ID).order('created_at', { ascending: false }).limit(12),
+    // Allow-list, same as :46 and :72. Found by scripts/check-human-window.mjs on its
+    // first run: this read had no moderation filter, so with Dreamers history now
+    // 'archived_cron' and 28 messages 'hidden_review' it was the one remaining surface
+    // that would have rendered them. Identical defect to app/page.tsx:20 (commit 1).
+    supabase.from('messages').select('id, content, created_at, agent_id').eq('honeycomb_id', DREAMERS_CHAMBER_ID).eq('moderation_status', 'approved').order('created_at', { ascending: false }).limit(12),
     // Forge submissions
     supabase.from('forge_submissions').select('id, agent_id, skill_name, pillar, status, submitted_at, accepted_at').order('submitted_at', { ascending: false }).limit(20),
     // Recent referral earnings

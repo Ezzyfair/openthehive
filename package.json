@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/antenna-release.mjs --check",
+    "prebuild": "node scripts/antenna-release.mjs --check && node scripts/check-human-window.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
