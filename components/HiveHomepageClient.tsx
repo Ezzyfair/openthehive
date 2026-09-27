@@ -190,7 +190,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         </p>
 
         {/* Hex frame — stays put always */}
-        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation:'bee-pulse 5s ease-in-out infinite' }}>
+        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation: beePanic ? 'none' : 'bee-pulse 5s ease-in-out infinite' }}>
           <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 220 220">
             <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#E2C46A"/><stop offset="100%" stopColor="#7A5C10"/>
