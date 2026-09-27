@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import LiveHivePulse from '@/components/LiveHivePulse';
@@ -48,9 +48,15 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
 
   // Countdown
   const [countdown, setCountdown] = useState({ d:'--',h:'--',m:'--' });
+  const [beePanic, setBeePanic] = useState(false);
+  const [beeScale, setBeeScale] = useState(1);
+  const [beeOffset, setBeeOffset] = useState({ x: 0, y: 0 });
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panicTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const panicRaf = useRef<number | null>(null);
   useEffect(() => {
     const tick = () => {
-      const t = new Date('2026-10-01T09:00:00-04:00').getTime() - Date.now();
+      const t = new Date('2026-10-20T09:00:00-04:00').getTime() - Date.now();
       if (t <= 0) { setCountdown({ d:'00',h:'00',m:'00' }); return; }
       setCountdown({
         d: String(Math.floor(t/864e5)).padStart(2,'0'),
@@ -69,7 +75,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
     e.preventDefault();
     const email = (e.currentTarget.querySelector('input[type=email]') as HTMLInputElement)?.value;
     // TODO: wire to /api/waitlist
-    e.currentTarget.innerHTML = '<p style="font-family:Cinzel,serif;font-size:13px;letter-spacing:0.18em;color:#A8862A;padding:20px 0">✦ You\'re on the list. October 1 — see you in the colony.</p>';
+    e.currentTarget.innerHTML = '<p style="font-family:Cinzel,serif;font-size:13px;letter-spacing:0.18em;color:#A8862A;padding:20px 0">✦ You\'re on the list. Signups open Oct 20 — see you in the colony.</p>';
     console.log('Waitlist:', email);
   };
 
@@ -180,7 +186,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </button>
         </form>
         <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', position:'relative' }}>
-          Colony opens <strong style={{ color:'var(--gold-mid)' }}>October 1, 2026</strong> · First 100 bees receive permanent Founding status
+          Signups open <strong style={{ color:'var(--gold-mid)' }}>October 20, 2026</strong> · First flight October 22 · First 100 bees receive permanent Founding status
         </p>
       </section>
 
@@ -353,7 +359,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
       <section id="join" style={{ background:'var(--cream-dark)', padding:'80px 16px', textAlign:'center', position:'relative', overflow:'hidden' }}>
         <div style={{ position:'absolute', top:-1, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,var(--gold),transparent)' }}/>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
-          <span style={{ fontFamily:'Cinzel,serif', fontSize:'10.5px', letterSpacing:'0.32em', color:'var(--gold-mid)', textTransform:'uppercase', display:'block', marginBottom:18 }}>October 1, 2026</span>
+          <span style={{ fontFamily:'Cinzel,serif', fontSize:'10.5px', letterSpacing:'0.32em', color:'var(--gold-mid)', textTransform:'uppercase', display:'block', marginBottom:18 }}>October 20, 2026</span>
           <h2 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(44px,7vw,84px)', fontWeight:300, color:'var(--charcoal)', lineHeight:1.08, marginBottom:24 }}>
             The Colony Opens.<br/><em style={{ fontStyle:'italic', background:'linear-gradient(135deg,var(--gold-light),var(--gold-mid))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>Be There First.</em>
           </h2>
@@ -363,7 +369,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </p>
 
           <div style={{ display:'flex', gap:24, justifyContent:'center', flexWrap:'wrap', marginBottom:36 }}>
-            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ No Charge Until Oct 1'].map(p => (
+            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ No Charge Until Oct 20'].map(p => (
               <span key={p} style={{ fontFamily:'Cinzel,serif', fontSize:'9.5px', letterSpacing:'0.16em', color:'var(--gold-mid)', border:'1px solid var(--gold-border)', padding:'8px 18px', textTransform:'uppercase' }}>{p}</span>
             ))}
           </div>
@@ -376,7 +382,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             </button>
           </form>
           <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', marginBottom:48 }}>
-            No spam. One email when the colony opens. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>October 1 at 9:00 AM Eastern.</strong>
+            No spam. One email when signups open. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>October 20 — first flight October 22, 7:00 AM Eastern.</strong>
           </p>
 
           <div style={{ display:'flex', gap:'clamp(12px,5vw,36px)', justifyContent:'center', flexWrap:'nowrap', overflow:'hidden', maxWidth:'100%', padding:'0 16px' }}>
