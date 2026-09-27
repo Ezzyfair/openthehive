@@ -51,6 +51,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
   const [beePanic, setBeePanic] = useState(false);
   const [beeScale, setBeeScale] = useState(1);
   const [beeOffset, setBeeOffset] = useState({ x: 0, y: 0 });
+  const [beeRotation, setBeeRotation] = useState(0);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panicTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panicRaf = useRef<number | null>(null);
@@ -98,23 +99,34 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
 
   const startFlight = () => {
     let scale = 1;
-    let dx = (Math.random()-0.5)*80;
-    let dy = (Math.random()-0.5)*60;
+    let rotation = 0;
+    // Bias toward upper area (bee flies up toward head/top of screen)
+    const dx_speed = (Math.random() - 0.5) * 40;   // mild horizontal drift
+    const dy_speed = -(60 + Math.random() * 40);    // strong upward bias
+    const spin_speed = 8 + Math.random() * 12;      // degrees per frame
+    let dx = 0;
+    let dy = 0;
     const zoom = () => {
-      scale = Math.min(scale * 1.20, 10);
-      dx *= 1.09; dy *= 1.09;
+      scale = scale * 1.18;
+      rotation += spin_speed;
+      dx += dx_speed * 0.12;
+      dy += dy_speed * 0.12;
       setBeeScale(scale);
-      setBeeOffset({ x:dx, y:dy });
-      if (scale < 10) {
+      setBeeOffset({ x: dx, y: dy });
+      setBeeRotation(rotation);
+      // Keep going until bee is massive and off screen (scale > 14)
+      if (scale < 14) {
         panicRaf.current = requestAnimationFrame(zoom);
       } else {
-        // Freeze then snap back
+        // Instantly hide, wait a beat, then snap back silently
+        setBeeScale(0);
+        setBeeOffset({ x: 0, y: 0 });
+        setBeeRotation(0);
         panicTimer.current = setTimeout(() => {
-          setBeeScale(1);
-          setBeeOffset({ x:0, y:0 });
           setBeePanic(false);
+          setBeeScale(1);
           holdTimer.current = null;
-        }, 400);
+        }, 600);
       }
     };
     panicRaf.current = requestAnimationFrame(zoom);
@@ -186,8 +198,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           style={{
             position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, cursor:'pointer',
             animation: beePanic ? 'none' : 'bee-pulse 5s ease-in-out infinite',
-            transform: `translate(${beeOffset.x}px, ${beeOffset.y}px) scale(${beeScale})`,
-            transition: !beePanic && beeScale < 1.5 ? 'transform 0.7s cubic-bezier(0.34,1.56,0.64,1)' : 'none',
+            transform: `translate(${beeOffset.x}px, ${beeOffset.y}px) scale(${beeScale}) rotate(${beeRotation}deg)`,
+            transition: !beePanic ? 'transform 0.5s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s' : 'none',
           }}>
           <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 220 220">
             <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
