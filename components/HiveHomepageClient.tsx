@@ -79,6 +79,51 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
     console.log('Waitlist:', email);
   };
 
+
+  const startHold = () => {
+    if (holdTimer.current) return;
+    holdTimer.current = setTimeout(() => {
+      // Jitter phase
+      let frame = 0;
+      const jitter = () => {
+        frame++;
+        setBeeOffset({ x:(Math.random()-0.5)*14, y:(Math.random()-0.5)*14 });
+        if (frame < 30) panicRaf.current = requestAnimationFrame(jitter);
+        else startFlight();
+      };
+      setBeePanic(true);
+      panicRaf.current = requestAnimationFrame(jitter);
+    }, 800);
+  };
+
+  const startFlight = () => {
+    let scale = 1;
+    let dx = (Math.random()-0.5)*80;
+    let dy = (Math.random()-0.5)*60;
+    const zoom = () => {
+      scale = Math.min(scale * 1.20, 10);
+      dx *= 1.09; dy *= 1.09;
+      setBeeScale(scale);
+      setBeeOffset({ x:dx, y:dy });
+      if (scale < 10) {
+        panicRaf.current = requestAnimationFrame(zoom);
+      } else {
+        // Freeze then snap back
+        panicTimer.current = setTimeout(() => {
+          setBeeScale(1);
+          setBeeOffset({ x:0, y:0 });
+          setBeePanic(false);
+          holdTimer.current = null;
+        }, 400);
+      }
+    };
+    panicRaf.current = requestAnimationFrame(zoom);
+  };
+
+  const cancelHold = () => {
+    if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
+  };
+
   return (
     <div style={{ fontFamily:"'Inter',sans-serif", background:'var(--cream)', color:'var(--body-text)', overflowX:'hidden' }}>
 
@@ -133,8 +178,17 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         </p>
 
         {/* Bee + hex frame */}
-        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation:'bee-pulse 5s ease-in-out infinite', cursor:'pointer' }}
-          onClick={() => { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); }}>
+        <div
+          onPointerDown={startHold}
+          onPointerUp={cancelHold}
+          onPointerLeave={cancelHold}
+          onClick={() => { if (!beePanic) { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); } }}
+          style={{
+            position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, cursor:'pointer',
+            animation: beePanic ? 'none' : 'bee-pulse 5s ease-in-out infinite',
+            transform: `translate(${beeOffset.x}px, ${beeOffset.y}px) scale(${beeScale})`,
+            transition: !beePanic && beeScale < 1.5 ? 'transform 0.7s cubic-bezier(0.34,1.56,0.64,1)' : 'none',
+          }}>
           <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 220 220">
             <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#E2C46A"/><stop offset="100%" stopColor="#7A5C10"/>
@@ -151,8 +205,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               position:'absolute', top:'50%', left:'50%',
               transform:'translate(-50%,-50%)',
               objectFit:'contain', mixBlendMode:'multiply',
-              filter: beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
-              animation: beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
+              filter: beePanic ? 'drop-shadow(0 12px 60px rgba(201,168,76,1.0)) brightness(1.2)' : beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
+              animation: beePanic ? 'none' : beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
               transition:'filter 0.2s',
               maxWidth:'90%', maxHeight:'90%'
             }}
