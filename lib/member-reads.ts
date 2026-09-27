@@ -12,8 +12,9 @@
 // names the first millisecond NOT yet seen" (FIND-CURSOR-PRECISION). This module
 // imports that contract and adds nothing to it. One rule, one place.
 // ----------------------------------------------------------------------------
+import { NextResponse } from 'next/server';
 import { cursorToIso, nextCursorAfter, postedAtMs } from './antenna/chamber';
-import { BeeError } from './antenna/errors';
+import { BeeError, beeErrorResponse } from './antenna/errors';
 
 /** Page size. 50 is the ruling; a caller may ask for less, never more. */
 export const MAX_LIMIT = 50;
@@ -118,4 +119,33 @@ export function shapePage(
     next_cursor: last ? nextCursorAfter(last.created_at) : req.cursor,
     has_more: rows.length === req.limit,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Carry-in 9 (Nikita 001b LOW) — Cache-Control on EVERY member response
+// ─────────────────────────────────────────────────────────────────────────────
+// Production answered /api/member/colony with Next's default for a dynamic route,
+// `public, max-age=0, must-revalidate`. Harmless on a 401 whose body carries nothing,
+// but `public` is the wrong word on a response that contains somebody's chamber.
+//
+// The four route exports govern the INBOUND fetch (FIND-POLL-CACHE). This is the
+// OUTBOUND axis and it is a different thing, which is why one did not imply the other.
+//
+// beeErrorResponse is NOT modified: it is shared with /api/bee/*, and changing the bee
+// lane's headers is not this ticket. These two wrappers are member-lane only.
+export const MEMBER_CACHE_CONTROL = 'private, no-store';
+
+/** Every 2xx a member route returns leaves through here. */
+export function memberJson(body: unknown, init?: { status?: number }): NextResponse {
+  return NextResponse.json(body as any, {
+    status: init?.status ?? 200,
+    headers: { 'Cache-Control': MEMBER_CACHE_CONTROL },
+  });
+}
+
+/** Every failure a member route returns leaves through here — 401 included. */
+export function memberErrorResponse(err: unknown): NextResponse {
+  const res = beeErrorResponse(err);
+  res.headers.set('Cache-Control', MEMBER_CACHE_CONTROL);
+  return res;
 }

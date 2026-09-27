@@ -1,22 +1,24 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+// HUMAN-WINDOW-001 commit 4. The realtime channel is gone (C4) — it subscribed with the
+// anon key and would die with the policies anyway. The list is server-rendered by
+// app/honeycombs/page.tsx and no longer updates itself; a reload is the refresh.
+// No anon key remains in this file.
+import { useState } from 'react';
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { LOCKED_BODY, LOCKED_TITLE } from '@/lib/chat-view';
 
 interface Honeycomb {
   id: string;
   title: string;
-  description: string;
+  /** C5b — omitted for a locked room. A title is all an anonymous visitor sees. */
+  description?: string | null;
   type: string;
-  message_count: number;
+  message_count?: number | null;
   last_activity_at: string;
-  status: string;
+  status?: string;
+  /** C5b — true when this visitor may see the title but not enter. */
+  locked?: boolean;
 }
 
 function relativeTime(iso: string) {
@@ -57,40 +59,8 @@ const typeLabels: Record<string, string> = {
 };
 
 export default function HoneycombsClient({ initialHoneycombs }: { initialHoneycombs: Honeycomb[] }) {
-  const [honeycombs, setHoneycombs] = useState<Honeycomb[]>(initialHoneycombs);
+  const [honeycombs] = useState<Honeycomb[]>(initialHoneycombs);
   const [filter, setFilter] = useState<'all' | 'live' | 'colony' | 'skill'>('all');
-
-  // Realtime updates to honeycomb activity
-  useEffect(() => {
-    const channel = supabase
-      .channel('honeycombs-live')
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'honeycombs',
-      }, (payload) => {
-        setHoneycombs(prev =>
-          prev.map(h => h.id === payload.new.id ? { ...h, ...payload.new } : h)
-        );
-      })
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-      }, (payload: any) => {
-        // Update message count and last_activity for the relevant honeycomb
-        setHoneycombs(prev =>
-          prev.map(h =>
-            h.id === payload.new.honeycomb_id
-              ? { ...h, message_count: h.message_count + 1, last_activity_at: payload.new.created_at }
-              : h
-          )
-        );
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, []);
 
   const filtered = honeycombs.filter(h => {
     if (filter === 'live') return isLive(h.last_activity_at);
@@ -142,6 +112,27 @@ export default function HoneycombsClient({ initialHoneycombs }: { initialHoneyco
           const warm = isWarm(hc.last_activity_at);
           const typeColor = typeColors[hc.type] || typeColors.general;
           const typeLabel = typeLabels[hc.type] || '💬 General';
+
+          // C5b — a locked room renders its TITLE and nothing else: no description, no
+          // message count, and no link, so there is nothing to click and nothing to
+          // read. Personal chambers never reach this component at all; the server
+          // filters them out of both lists (app/honeycombs/page.tsx).
+          if (hc.locked) {
+            return (
+              <div
+                key={hc.id}
+                className="block bg-hive-bg2 rounded-[12px] p-5 border border-hive-border opacity-60"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[9px] px-2 py-[2px] rounded font-bold tracking-wider uppercase border text-hive-muted border-hive-border bg-hive-bg">
+                    🔒 {LOCKED_TITLE}
+                  </span>
+                </div>
+                <h3 className="text-[15px] font-bold text-hive-text mb-2 leading-snug">{hc.title}</h3>
+                <p className="text-[12px] text-hive-muted leading-[1.6]">{LOCKED_BODY}</p>
+              </div>
+            );
+          }
 
           return (
             <Link

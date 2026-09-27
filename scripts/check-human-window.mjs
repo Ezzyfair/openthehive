@@ -82,7 +82,9 @@ function checkTree(sub, kind) {
         failures.push({ where: r, why: `does not export const ${name} — see FIND-POLL-CACHE` });
       }
     }
-    if (kind === 'member') {
+    if (kind === 'exports-only') {
+      notes.push({ where: r, note: 'four route exports declared (cron: no session rule applies)' });
+    } else if (kind === 'member') {
       const imports = /import[^;]*\bresolveMemberSession\b[^;]*from\s+['"][^'"]*antenna\/member['"]/s.test(src);
       const calls = /\bresolveMemberSession\s*\(/.test(src);
       if (!imports) failures.push({ where: r, why: 'does not import resolveMemberSession from lib/antenna/member' });
@@ -101,6 +103,11 @@ function checkTree(sub, kind) {
 
 const memberCount = checkTree(['app', 'api', 'member'], 'member');
 const publicCount = checkTree(['app', 'api', 'public'], 'public');
+// Carry-in 10 — cron routes get the four-export check and nothing else. They hold no
+// member session (they authenticate with a Bearer secret) and they are not public, so
+// neither session rule applies; but a cron route serving a cached fetch is the same
+// FIND-POLL-CACHE bug as anywhere else.
+const cronCount = checkTree(['app', 'api', 'cron'], 'exports-only');
 
 // ── RULE 2 ──────────────────────────────────────────────────────────────────
 /**
@@ -202,8 +209,11 @@ for (const t of trees) {
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
-console.log(`RULE 1 — app/api/member/** (${memberCount} route file(s)) and app/api/public/** (${publicCount})`);
-if (memberCount + publicCount === 0) console.log('  (no route files yet)');
+console.log(
+  `RULE 1 — app/api/member/** (${memberCount}), app/api/public/** (${publicCount}), ` +
+    `app/api/cron/** (${cronCount}, exports only)`,
+);
+if (memberCount + publicCount + cronCount === 0) console.log('  (no route files yet)');
 for (const n of [...notes]) {
   const bad = failures.find((f) => f.where === n.where);
   if (!bad) console.log(`  ok      ${n.where}  —  ${n.note}`);
@@ -227,7 +237,7 @@ if (failures.length > 0) {
 const guarded = messageSites.filter((s) => !s.verdict.exempt).length;
 const exemptCount = messageSites.length - guarded;
 console.log(
-  `\ncheck-human-window: rule 1 clean (${memberCount} member, ${publicCount} public); ` +
+  `\ncheck-human-window: rule 1 clean (${memberCount} member, ${publicCount} public, ${cronCount} cron); ` +
     `rule 2 clean (${guarded} content read(s) filtered, ${exemptCount} exempt and printed).`,
 );
 process.exit(0);

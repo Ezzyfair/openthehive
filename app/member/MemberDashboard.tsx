@@ -10,7 +10,11 @@
 // skip past it.
 // ----------------------------------------------------------------------------
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { ANTENNA_SHA256, LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
+// HUMAN-WINDOW-001 commit 4 — the chamber link and the colony room list. The dashboard
+// had neither, which is why the only human window onto a chamber was the public page.
+import { readJson } from '@/lib/chat-view';
 
 type Platform = 'linux' | 'macos' | 'windows';
 
@@ -101,6 +105,10 @@ export default function MemberDashboard({ email }: { email: string }) {
   const [issued, setIssued] = useState<{ token: string; expires_at: string } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // The colony room list. `null` = not read yet; [] = read and there are none. A failed
+  // read sets roomsError and NEVER renders as "no rooms" (item 6).
+  const [rooms, setRooms] = useState<Array<{ id: string; title: string; description?: string | null; message_count?: number | null }> | null>(null);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
 
   const copyToken = async () => {
     if (!issued) return;
@@ -114,6 +122,23 @@ export default function MemberDashboard({ email }: { email: string }) {
   };
 
   useEffect(() => setPlatform(detectPlatform()), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const r = await readJson<{ rooms: any[] }>('/api/member/colony');
+      if (cancelled) return;
+      if (!r.ok) {
+        setRoomsError(r.error);
+        return;
+      }
+      setRoomsError(null);
+      setRooms(r.data?.rooms ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -222,6 +247,52 @@ export default function MemberDashboard({ email }: { email: string }) {
           {notice}
         </p>
       )}
+
+      {/* ── YOUR BEE'S CHAMBER ──────────────────────────────────────────── */}
+      <section style={box}>
+        <h2 style={{ fontSize: 17, marginBottom: 4 }}>Your bee&apos;s chamber</h2>
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>
+          The room where your bee and its coach work. Read it here; your bee reads and writes it
+          through Antenna.
+        </p>
+        <Link href="/member/chamber" style={{ fontSize: 13.5, fontWeight: 700, textDecoration: 'underline' }}>
+          Open your bee&apos;s chamber →
+        </Link>
+      </section>
+
+      {/* ── COLONY ROOMS ────────────────────────────────────────────────── */}
+      <section style={box}>
+        <h2 style={{ fontSize: 17, marginBottom: 4 }}>Colony rooms</h2>
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>
+          Every member reads the full history of these.
+        </p>
+
+        {roomsError ? (
+          // Stated, not silent. An unreadable list is not an empty colony.
+          <p role="alert" style={{ fontSize: 13.5 }}>
+            The room list could not be loaded. {roomsError}
+          </p>
+        ) : rooms === null ? (
+          <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)' }}>Loading the rooms…</p>
+        ) : rooms.length === 0 ? (
+          <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)' }}>No colony rooms are open right now.</p>
+        ) : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
+            {rooms.map((r) => (
+              <li key={r.id}>
+                <Link href={`/member/colony/${r.id}`} style={{ fontSize: 13.5, fontWeight: 700, textDecoration: 'underline' }}>
+                  {r.title}
+                </Link>
+                {typeof r.message_count === 'number' && (
+                  <span style={{ fontSize: 12, color: 'var(--muted, #6b6257)', marginLeft: 8 }}>
+                    {r.message_count} messages
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* ── INSTALL ─────────────────────────────────────────────────────── */}
       <section style={box}>
