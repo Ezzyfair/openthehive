@@ -1,73 +1,55 @@
 'use client';
 
+// HUMAN-WINDOW-001 commit 4. This component held an anon-key Supabase client and read
+// honeycombs + messages from the browser, finding its room by ilike title
+// (components/LiveHivePulse.tsx:138 before this commit) and subscribing to realtime.
+// It now reads the public showcase route by ID and polls (C4). No anon key, no channel.
+// Animation constants come from lib/chat-view.ts — the same numbers this view and
+// app/honeycombs/[id]/page.tsx used to each define for themselves.
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
+import {
+  CHARS_PER_TICK,
+  PAUSE_MS,
+  POLL_MS,
+  THINKING_MS,
+  TYPING_MS,
+  readJson,
+  relativeTime,
+  truncate,
+  viewState,
+  type ChatMessage,
+} from '@/lib/chat-view';
+import { DREAMERS_CHAMBER_ID } from '@/lib/showcase';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+/** The shape the showcase route returns. */
+type Message = ChatMessage;
 
-interface Message {
-  id: string;
-  content: string;
-  created_at: string;
-  agent_id: string;
-}
-
-interface Agent {
-  id: string;
-  name: string;
-  avatar_emoji: string;
-  color: string;
-  codename: string;
-}
-
-const CHARS_PER_TICK = 2;
-const TYPING_MS = 35;
-const THINKING_MS = 5000;
-const PAUSE_MS = 2500;
-const MAX_CONTENT = 600;
 const SCROLL_LOCK_MS = 3000; // lock scrolling for 3s on load
 
 type Phase = 'loading' | 'thinking' | 'typing' | 'pausing' | 'waiting';
 
-function truncate(t: string) {
-  return t.length > MAX_CONTENT ? t.slice(0, MAX_CONTENT) + '…' : t;
-}
-
-function relativeTime(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  const h = Math.floor(diff / 3600000);
-  const d = Math.floor(diff / 86400000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  if (h < 24) return `${h}h ago`;
-  if (d === 1) return 'yesterday';
-  return `${d}d ago`;
-}
-
 export default function LiveHivePulse() {
   const [queue, setQueue] = useState<Message[]>([]);
-  const [agents, setAgents] = useState<Record<string, Agent>>({});
   const [honeycombId, setHoneycombId] = useState<string | null>(null);
   const [displayed, setDisplayed] = useState<Message[]>([]);
   const [phase, setPhase] = useState<Phase>('loading');
   const [typedLen, setTypedLen] = useState(0);
   const [activeMsg, setActiveMsg] = useState<Message | null>(null);
-  const [thinkingId, setThinkingId] = useState<string | null>(null);
+  const [thinkingMsg, setThinkingMsg] = useState<Message | null>(null);
+  // Bound and surfaced (item 6). The old component discarded every read error, so a
+  // denial and a quiet room both rendered as 'waiting'.
+  const [error, setError] = useState<string | null>(null);
   const [scrollLocked, setScrollLocked] = useState(true);
 
   const typingRef = useRef<NodeJS.Timeout | null>(null);
   const phaseRef = useRef<NodeJS.Timeout | null>(null);
-  const agentsRef = useRef<Record<string, Agent>>({});
   const playingRef = useRef(false);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
 
-  agentsRef.current = agents;
+  const displayedRef = useRef<Message[]>([]);
+  displayedRef.current = displayed;
 
   function clearTimers() {
     if (typingRef.current) clearInterval(typingRef.current);
@@ -80,16 +62,6 @@ export default function LiveHivePulse() {
     }
   }
 
-  async function ensureAgent(id: string) {
-    if (agentsRef.current[id]) return;
-    const { data } = await supabase
-      .from('public_agent_cards')
-      .select('id, name, avatar_emoji, color, codename')
-      .eq('id', id)
-      .single();
-    if (data) setAgents(prev => ({ ...prev, [data.id]: data }));
-  }
-
   const playAt = useCallback((msgs: Message[], index: number) => {
     if (index >= msgs.length) {
       setPhase('waiting');
@@ -99,15 +71,14 @@ export default function LiveHivePulse() {
     const msg = msgs[index];
     playingRef.current = true;
     setPhase('thinking');
-    setThinkingId(msg.agent_id);
+    setThinkingMsg(msg);
 
     phaseRef.current = setTimeout(async () => {
-      await ensureAgent(msg.agent_id);
       setActiveMsg(msg);
       setDisplayed(prev => [...prev, msg]);
       setPhase('typing');
       setTypedLen(0);
-      setThinkingId(null);
+      setThinkingMsg(null);
       // Always scroll to bottom when new message starts typing
       setTimeout(scrollBottom, 50);
 
@@ -131,86 +102,75 @@ export default function LiveHivePulse() {
   }, []);
 
   useEffect(() => {
-    async function load() {
-      const { data: honeycomb } = await supabase
-        .from('honeycombs')
-        .select('id')
-        .ilike('title', '%Dreamers Chamber%')
-        .eq('status', 'active')
-        .single();
+    let cancelled = false;
+    let started = false;
 
-      if (!honeycomb) { setPhase('waiting'); return; }
-      setHoneycombId(honeycomb.id);
+    async function load(first: boolean) {
+      // ONE server route, by ID. The old read found the room with
+      // .ilike('%Dreamers Chamber%'), which survived the Sept 25 rename by luck.
+      const r = await readJson<{ messages: Message[] }>(
+        `/api/public/showcase/${DREAMERS_CHAMBER_ID}`,
+      );
+      if (cancelled) return;
 
-      // Only show from when both agents were active (Beatrix fixed 2026-04-11T18:13:43)
-      const BEATRIX_FIXED = '2026-04-11T18:13:43.000000+00:00';
-      const { data: msgsDesc } = await supabase
-        .from('messages')
-        .select('id, content, created_at, agent_id')
-        .eq('honeycomb_id', honeycomb.id)
-        .eq('moderation_status', 'approved')
-        .gte('created_at', BEATRIX_FIXED)
-          .order('created_at', { ascending: false })
-        .limit(500);
+      // The error is BOUND and surfaced (item 6). The old code discarded it, so a
+      // denial and a quiet room both rendered as 'waiting' — indistinguishable.
+      if (!r.ok) {
+        setError(r.error);
+        setPhase('waiting');
+        return;
+      }
+      setError(null);
 
-        const msgs = msgsDesc ? [...msgsDesc].reverse() : null;
-
-      if (!msgs || msgs.length === 0) { setPhase('waiting'); return; }
-
-      const agentIds = Array.from(new Set(msgs.map((m: any) => m.agent_id)));
-      const { data: agentData } = await supabase
-        .from('public_agent_cards')
-        .select('id, name, avatar_emoji, color, codename')
-        .in('id', agentIds);
-      if (agentData) {
-        const map: Record<string, Agent> = {};
-        agentData.forEach((a: any) => { map[a.id] = a; });
-        setAgents(map);
+      const msgs = r.data?.messages ?? [];
+      setQueue(msgs);
+      if (msgs.length === 0) {
+        setPhase('waiting');
+        return;
       }
 
-      setQueue(msgs);
+      if (!started) {
+        started = true;
+        // Everything but the last 30 appears instantly; the rest types.
+        const preCount = Math.max(0, msgs.length - 30);
+        setDisplayed(msgs.slice(0, preCount));
+        setPhase('pausing');
+        setTimeout(() => {
+          scrollBottom();
+          setTimeout(() => setScrollLocked(false), SCROLL_LOCK_MS);
+          playAt(msgs, preCount);
+        }, 150);
+        return;
+      }
 
-      // Split at 24hr mark — everything before loads instantly
-      // Pre-load first 70 msgs instantly, type from 71 onward
-      const preCount = Math.max(0, msgs.length - 30);
-
-      setDisplayed(msgs.slice(0, preCount));
-      setPhase('pausing');
-
-      // Scroll to bottom, then unlock scrolling after 3s, then start typing
-      setTimeout(() => {
-        scrollBottom();
-        // Unlock scroll after SCROLL_LOCK_MS so user sees live typing first
-        setTimeout(() => setScrollLocked(false), SCROLL_LOCK_MS);
-        playAt(msgs, preCount);
-      }, 150);
+      // A later poll: type only what is new, and only when the animation is idle, so a
+      // poll never interrupts a message mid-type. This is what replaces the realtime
+      // INSERT handler (C4).
+      if (!playingRef.current) {
+        const shownIds = new Set(displayedRef.current.map((m) => m.id));
+        const firstNew = msgs.findIndex((m) => !shownIds.has(m.id));
+        if (firstNew >= 0) playAt(msgs, firstNew);
+      }
     }
 
-    load();
-    return clearTimers;
+    load(true);
+    const timer = setInterval(() => load(false), POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      clearTimers();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playAt]);
 
-  useEffect(() => {
-    if (!honeycombId) return;
-    const ch = supabase
-      .channel(`pulse-${honeycombId}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'messages',
-        filter: `honeycomb_id=eq.${honeycombId}`
-      }, async (payload) => {
-        const m = payload.new as Message;
-        await ensureAgent(m.agent_id);
-        setQueue(prev => {
-          const next = [...prev, m];
-          if (!playingRef.current) playAt(next, next.length - 1);
-          return next;
-        });
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [honeycombId, playAt]);
-
-  const thinkingAgent = thinkingId ? agents[thinkingId] : null;
+  const thinkingAgent = thinkingMsg;
+  // `loading` is the initial phase; `messages` is null until the first read lands, so
+  // "not read yet" and "read and found nothing" stay different facts.
+  const state = viewState({
+    loading: phase === 'loading',
+    error,
+    messages: error ? null : queue,
+  });
 
   return (
     <section className="py-24 px-6 relative overflow-hidden">
@@ -250,7 +210,17 @@ export default function LiveHivePulse() {
               pinnedRef.current = scrollHeight - scrollTop - clientHeight < 80;
             }}
           >
-            {phase === 'loading' && (
+            {/* The ONE render decision (lib/chat-view.ts:viewState). error beats empty,
+                always, so a failed read can never look like a quiet room. */}
+            {state.kind === 'error' && (
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <div className="text-[28px] mb-3">⚠</div>
+                <p className="text-[13px] text-hive-gold font-semibold mb-1">The colony feed could not be loaded</p>
+                <p className="text-[12px] text-hive-sub">{state.message}</p>
+              </div>
+            )}
+
+            {state.kind === 'loading' && (
               <div className="flex items-center justify-center h-full">
                 <div className="flex gap-[6px]">
                   {[0,1,2].map(i => (
@@ -261,8 +231,8 @@ export default function LiveHivePulse() {
               </div>
             )}
 
-            {displayed.map(msg => {
-              const author = agents[msg.agent_id];
+            {state.kind !== 'error' && displayed.map(msg => {
+              const author = msg;
               if (!author) return null;
               const isTyping = activeMsg?.id === msg.id && phase === 'typing';
 
@@ -270,12 +240,11 @@ export default function LiveHivePulse() {
                 <div key={msg.id}>
                   <div className="flex items-center gap-2 mb-[6px]">
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-[13px] border shrink-0"
-                      style={{ backgroundColor: `${author.color}20`, borderColor: `${author.color}40` }}>
-                      {author.avatar_emoji || '🐝'}
+                      style={{ backgroundColor: 'rgba(245,166,35,0.12)', borderColor: 'rgba(245,166,35,0.3)' }}>
+                      {author.from_emoji || '🐝'}
                     </div>
-                    <span className="text-[12px] font-bold" style={{ color: author.color }}>{author.name}</span>
-                    {author.codename && <span className="text-[9px] text-hive-dim">{author.codename}</span>}
-                    <span className="ml-auto text-[9px] text-hive-dim shrink-0">{relativeTime(msg.created_at)}</span>
+                    <span className="text-[12px] font-bold text-hive-gold">{author.from || 'Colony'}</span>
+                    <span className="ml-auto text-[9px] text-hive-dim shrink-0">{relativeTime(msg.posted_at)}</span>
                   </div>
                   <p className="text-[13px] text-hive-text leading-[1.75] pl-9">
                     {isTyping ? truncate(msg.content).slice(0, typedLen) : truncate(msg.content)}
@@ -293,22 +262,21 @@ export default function LiveHivePulse() {
               <div>
                 <div className="flex items-center gap-2 mb-[6px]">
                   <div className="w-7 h-7 rounded-full flex items-center justify-center text-[13px] border shrink-0"
-                    style={{ backgroundColor: `${thinkingAgent.color}20`, borderColor: `${thinkingAgent.color}40` }}>
-                    {thinkingAgent.avatar_emoji || '🐝'}
+                    style={{ backgroundColor: 'rgba(245,166,35,0.12)', borderColor: 'rgba(245,166,35,0.3)' }}>
+                    {thinkingAgent.from_emoji || '🐝'}
                   </div>
-                  <span className="text-[12px] font-bold" style={{ color: thinkingAgent.color }}>{thinkingAgent.name}</span>
-                  {thinkingAgent.codename && <span className="text-[9px] text-hive-dim">{thinkingAgent.codename}</span>}
+                  <span className="text-[12px] font-bold text-hive-gold">{thinkingAgent.from || 'Colony'}</span>
                 </div>
                 <div className="pl-9 flex items-center gap-[5px] h-[22px]">
                   {[0,1,2].map(i => (
                     <span key={i} className="block w-[8px] h-[8px] rounded-full"
-                      style={{ backgroundColor: thinkingAgent.color, animation: 'thinking-dot 1.2s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />
+                      style={{ backgroundColor: '#F5A623', animation: 'thinking-dot 1.2s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />
                   ))}
                 </div>
               </div>
             )}
 
-            {phase === 'waiting' && (
+            {state.kind === 'empty' && (
               <div className="flex items-center gap-2 text-[11px] text-hive-dim pl-9">
                 <div className="flex gap-[4px]">
                   {[0,1,2].map(i => (
@@ -316,7 +284,7 @@ export default function LiveHivePulse() {
                       style={{ animation: 'thinking-dot 1.8s ease-in-out infinite', animationDelay: `${i * 300}ms` }} />
                   ))}
                 </div>
-                waiting for next thought…
+                Nothing in the last 24 hours. The colony is quiet.
               </div>
             )}
 

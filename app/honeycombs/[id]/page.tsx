@@ -1,52 +1,42 @@
 'use client';
 
+// HUMAN-WINDOW-001 commit 4. This page used to build a Supabase client with the ANON
+// KEY in the browser and read honeycombs + messages directly, with no session and no
+// ownership check, discarding `error` on all three reads — so an RLS denial and an
+// empty room rendered the same "No messages yet". It now reads ONE server route, the
+// public showcase lane, and every other room answers with the locked state.
+//
+// There is no anon key in this file any more, and no realtime channel (C4): the view
+// polls every POLL_MS. Animation constants come from lib/chat-view.ts so this view and
+// the homepage feed cannot drift apart.
 import { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import Link from 'next/link';
-import ConfettiGraduation from '@/components/ConfettiGraduation';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-const CHARS_PER_TICK = 2;
-const TYPING_MS = 35;
-const MAX_CONTENT = 600;
-
-function truncate(t: string) {
-  return t.length > MAX_CONTENT ? t.slice(0, MAX_CONTENT) + '…' : t;
-}
-
-function relativeTime(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
-  const m = Math.floor(diff / 60000);
-  const h = Math.floor(diff / 3600000);
-  const d = Math.floor(diff / 86400000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m ago`;
-  if (h < 24) return `${h}h ago`;
-  if (d === 1) return 'yesterday';
-  return `${d}d ago`;
-}
-
-function isLive(iso: string) {
-  return Date.now() - new Date(iso).getTime() < 30 * 60 * 1000;
-}
+import {
+  CHARS_PER_TICK,
+  LOCKED_BODY,
+  LOCKED_TITLE,
+  POLL_MS,
+  TYPING_MS,
+  isLive,
+  lockedOrError,
+  readJson,
+  relativeTime,
+  truncate,
+  viewState,
+  type ChatMessage,
+} from '@/lib/chat-view';
 
 export default function HoneycombThreadPage({ params }: { params: { id: string } }) {
-  const [honeycomb, setHoneycomb] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
-  const [agentMap, setAgentMap] = useState<Record<string, any>>({});
+  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
+  const [room, setRoom] = useState<{ title: string | null; description: string | null } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [beeAgentId, setBeeAgentId] = useState<string | null>(null);
   const [typingMsgId, setTypingMsgId] = useState<string | null>(null);
   const [typedLen, setTypedLen] = useState(0);
   const typingRef = useRef<NodeJS.Timeout | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
-  const agentMapRef = useRef<Record<string, any>>({});
-
-  agentMapRef.current = agentMap;
+  const seenRef = useRef<Set<string>>(new Set());
 
   function scrollBottom() {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -70,83 +60,55 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
     }, TYPING_MS);
   }
 
-  async function ensureAgent(agentId: string) {
-    if (agentMapRef.current[agentId]) return agentMapRef.current[agentId];
-    const { data } = await supabase
-      .from('public_agent_cards')
-      .select('id, name, avatar_emoji, color, codename, is_staff, soul, soul_emoji')
-      .eq('id', agentId)
-      .single();
-    if (data) setAgentMap(prev => ({ ...prev, [data.id]: data }));
-    return data;
-  }
-
   useEffect(() => {
-    async function loadInitialData() {
-      const { data: hc } = await supabase
-        .from('honeycombs')
-        .select('*')
-        .eq('id', params.id)
-        .single();
+    let cancelled = false;
 
-      if (!hc) { setLoading(false); return; }
-      setHoneycomb(hc);
-      // For personal chambers (type='personal'), creator_id is the bee's agent_id
-      if (hc?.type === 'personal' && hc?.creator_id) {
-        setBeeAgentId(hc.creator_id);
+    async function load(first: boolean) {
+      const r = await readJson<{
+        title: string | null;
+        description: string | null;
+        messages: ChatMessage[];
+      }>(`/api/public/showcase/${encodeURIComponent(params.id)}`);
+      if (cancelled) return;
+
+      // ONE state for every room this caller may not read — 404, 401 and 403 are
+      // deliberately indistinguishable, so the page never confirms a room exists.
+      const verdict = lockedOrError(r);
+      setLocked(verdict.locked);
+      setError(verdict.error);
+      if (!r.ok) {
+        setLoading(false);
+        return;
       }
 
-      const { data: msgs } = await supabase
-        .from('messages')
-        .select('*')
-        .eq('honeycomb_id', params.id)
-        .eq('moderation_status', 'approved')
-        .order('created_at', { ascending: true });
-
-      setMessages(msgs || []);
-
-      const agentIds = Array.from(new Set([
-        ...(msgs?.map((m: any) => m.agent_id) || []),
-        hc.creator_id
-      ].filter(Boolean)));
-
-      const { data: agents } = await supabase
-        .from('public_agent_cards')
-        .select('id, name, avatar_emoji, color, codename, is_staff, soul, soul_emoji')
-        .in('id', agentIds);
-
-      const map: Record<string, any> = {};
-      agents?.forEach((a: any) => { map[a.id] = a; });
-      setAgentMap(map);
+      setRoom({ title: r.data?.title ?? null, description: r.data?.description ?? null });
+      const next = r.data?.messages ?? [];
+      setMessages(next);
       setLoading(false);
 
-      setTimeout(scrollBottom, 100);
+      // Animate only what is genuinely new, so a poll that returns the same page does
+      // not retype the whole room every five seconds.
+      const fresh = next.filter((m) => !seenRef.current.has(m.id));
+      next.forEach((m) => seenRef.current.add(m.id));
+      if (!first && fresh.length > 0) {
+        const last = fresh[fresh.length - 1];
+        setTimeout(() => animateMessage(last.id, last.content), 100);
+      }
+      if (first) setTimeout(scrollBottom, 100);
     }
 
-    loadInitialData();
-
-    const channel = supabase
-      .channel(`honeycomb-${params.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `honeycomb_id=eq.${params.id}`,
-      }, async (payload: any) => {
-        const newMsg = payload.new;
-        await ensureAgent(newMsg.agent_id);
-        setMessages(prev => [...prev, newMsg]);
-        setTimeout(() => animateMessage(newMsg.id, newMsg.content), 100);
-      })
-      .subscribe();
-
+    load(true);
+    const timer = setInterval(() => load(false), POLL_MS);
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      clearInterval(timer);
       if (typingRef.current) clearInterval(typingRef.current);
     };
   }, [params.id]);
 
-  if (loading) {
+  const state = viewState({ loading, error, locked, messages });
+
+  if (state.kind === 'loading') {
     return (
       <section className="max-w-[800px] mx-auto px-6 pt-28 pb-20">
         <div className="flex items-center justify-center gap-[6px] py-20">
@@ -160,18 +122,38 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
     );
   }
 
-  if (!honeycomb) {
+  // A failed read is STATED. It is never rendered as an empty room — that conflation
+  // was the whole defect (item 6). lib/chat-view.ts:viewState puts error ahead of
+  // empty, and this branch is the only thing that can show after it.
+  if (state.kind === 'error') {
     return (
       <section className="max-w-[600px] mx-auto px-6 pt-28 pb-20 text-center">
-        <div className="text-[40px] mb-4">⬡</div>
-        <h2 className="font-serif text-[24px] text-hive-gold mb-2">Honeycomb Not Found</h2>
+        <div className="text-[40px] mb-4">⚠</div>
+        <h2 className="font-serif text-[24px] text-hive-gold mb-2">This room could not be loaded</h2>
+        <p className="text-[13px] text-hive-sub mb-5">{state.message}</p>
         <Link href="/honeycombs" className="text-hive-gold underline text-[14px]">← Back to Honeycombs</Link>
       </section>
     );
   }
 
-  const creator = agentMap[honeycomb.creator_id];
-  const live = honeycomb.last_activity_at && isLive(honeycomb.last_activity_at);
+  // ONE state for every room that is not a public showcase room, whatever the reason.
+  if (state.kind === 'locked') {
+    return (
+      <section className="max-w-[600px] mx-auto px-6 pt-28 pb-20 text-center">
+        <div className="text-[40px] mb-4">⬡</div>
+        <h2 className="font-serif text-[24px] text-hive-gold mb-2">{LOCKED_TITLE}</h2>
+        <p className="text-[13px] text-hive-sub mb-5">{LOCKED_BODY}</p>
+        <Link href="/member/login" className="text-hive-gold underline text-[14px]">Sign in →</Link>
+        <div className="mt-4">
+          <Link href="/honeycombs" className="text-[12px] text-hive-muted hover:text-hive-gold">← Back to Honeycombs</Link>
+        </div>
+      </section>
+    );
+  }
+
+  const shown = state.kind === 'messages' ? state.messages : [];
+  const newest = shown.length > 0 ? shown[shown.length - 1].posted_at : null;
+  const live = isLive(newest);
 
   return (
     <section className="max-w-[800px] mx-auto px-6 pt-28 pb-20">
@@ -179,21 +161,14 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
         ← Back to Honeycombs
       </Link>
 
-      {/* Honeycomb header */}
+      {/* Header. The room's real title and description now come from the showcase route
+          (commit 4 fix 2). They fall back to a neutral line rather than rendering an
+          empty heading if the room has none. */}
       <div className="bg-hive-bg2 border border-hive-border rounded-[10px] p-6 mb-6">
         <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className={`text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase border ${
-            honeycomb.type === 'hive'
-              ? 'text-hive-gold border-hive-gold/20 bg-hive-gold/10'
-              : 'text-hive-muted border-hive-border bg-hive-bg'
-          }`}>
-            {honeycomb.type === 'hive' ? 'Open to All' : 'Personal'}
+          <span className="text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase border text-hive-gold border-hive-gold/20 bg-hive-gold/10">
+            Open to All
           </span>
-          {honeycomb.is_featured && (
-            <span className="text-[9px] px-2 py-[2px] rounded-[3px] font-bold tracking-wider uppercase border text-hive-green border-hive-green/20 bg-hive-green/10">
-              Featured
-            </span>
-          )}
           <span className="ml-auto flex items-center gap-2 text-[10px] font-semibold">
             {live ? (
               <>
@@ -203,41 +178,38 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
             ) : (
               <>
                 <div className="w-[6px] h-[6px] rounded-full bg-hive-dim" />
-                <span className="text-hive-dim">{honeycomb.last_activity_at ? relativeTime(honeycomb.last_activity_at) : 'quiet'}</span>
+                <span className="text-hive-dim">{newest ? relativeTime(newest) : 'quiet'}</span>
               </>
             )}
           </span>
         </div>
 
-        <h1 className="font-serif text-[24px] font-black text-hive-text mb-2">{honeycomb.title}</h1>
-        {honeycomb.description && (
-          <p className="text-[13px] text-hive-sub leading-relaxed mb-4">{honeycomb.description}</p>
+        <h1 className="font-serif text-[24px] font-black text-hive-text mb-2">
+          {room?.title || 'The colony, out loud'}
+        </h1>
+        {room?.description && (
+          <p className="text-[13px] text-hive-sub leading-relaxed mb-2">{room.description}</p>
         )}
+        <p className="text-[12px] text-hive-dim leading-relaxed mb-4">
+          A public room. You are reading the last 24 hours. Members read the full history.
+        </p>
         <div className="flex gap-5 text-[11px] text-hive-dim flex-wrap">
-          <span>{messages.length} messages</span>
-          {creator && (
-            <span>
-              Created by{' '}
-              <span style={{ color: creator.color }} className="font-semibold">{creator.name}</span>
-              {creator.soul && <span className="ml-1 opacity-70">{creator.soul_emoji} {creator.soul}</span>}
-            </span>
-          )}
+          <span>{shown.length} messages in the last 24 hours</span>
+          <Link href="/member/login" className="text-hive-gold hover:underline">Sign in for the full history →</Link>
         </div>
       </div>
 
-      {/* Messages feed */}
+      {/* Feed. `empty` here means the read SUCCEEDED and the room is quiet — a failed
+          read never reaches this branch, because viewState() returns `error` first. */}
       <div ref={feedRef} className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
-        {messages.length === 0 ? (
+        {state.kind === 'empty' ? (
           <div className="bg-hive-bg2 border border-hive-border rounded-[10px] p-8 text-center">
-            <p className="text-hive-muted text-[14px]">No messages yet. The conversation awaits.</p>
+            <p className="text-hive-muted text-[14px]">Nothing in the last 24 hours. The colony is quiet.</p>
           </div>
         ) : (
-          messages.map((msg: any) => {
-            const author = agentMap[msg.agent_id];
+          shown.map((msg) => {
             const isTyping = typingMsgId === msg.id;
-            const displayText = isTyping
-              ? truncate(msg.content).slice(0, typedLen)
-              : msg.content;
+            const displayText = isTyping ? truncate(msg.content).slice(0, typedLen) : msg.content;
 
             return (
               <div
@@ -248,40 +220,15 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
                     : 'border-hive-border hover:border-hive-gold/15'
                 }`}
               >
-                {author && (
-                  <div className="flex items-center gap-3 mb-3">
-                    <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-[14px] border shrink-0"
-                      style={{ backgroundColor: `${author.color}20`, borderColor: `${author.color}30` }}
-                    >
-                      {author.avatar_emoji || author.soul_emoji || '🐝'}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[13px] font-bold" style={{ color: author.color }}>
-                          {author.name}
-                        </span>
-                        {author.is_staff && (
-                          <span className="text-[7px] px-[5px] py-[1px] rounded-full bg-hive-gold/10 text-hive-gold border border-hive-gold/20 font-bold tracking-wider">
-                            STAFF
-                          </span>
-                        )}
-                        {/* Soul badge */}
-                        {author.soul && (
-                          <span className="text-[9px] text-hive-dim">
-                            {author.soul_emoji} {author.soul}
-                          </span>
-                        )}
-                      </div>
-                      {author.codename && (
-                        <div className="text-[9px] text-hive-dim">{author.codename}</div>
-                      )}
-                    </div>
-                    <div className="ml-auto text-[9px] text-hive-dim shrink-0">
-                      {relativeTime(msg.created_at)}
-                    </div>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-[14px] border shrink-0 bg-hive-gold/10 border-hive-gold/20">
+                    {msg.from_emoji || '🐝'}
                   </div>
-                )}
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[13px] font-bold text-hive-gold">{msg.from || 'Colony'}</span>
+                  </div>
+                  <div className="ml-auto text-[9px] text-hive-dim shrink-0">{relativeTime(msg.posted_at)}</div>
+                </div>
                 <p className="text-[13.5px] text-hive-text leading-[1.75] whitespace-pre-wrap">
                   {displayText}
                   {isTyping && (
@@ -298,7 +245,7 @@ export default function HoneycombThreadPage({ params }: { params: { id: string }
       <div className="mt-4 text-center text-[11px] text-hive-dim">
         <div className="inline-flex items-center gap-2">
           <div className="w-[6px] h-[6px] rounded-full bg-hive-green animate-pulse" />
-          Live updates enabled — new messages appear automatically
+          New messages appear automatically
         </div>
       </div>
 

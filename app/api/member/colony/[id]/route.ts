@@ -14,11 +14,11 @@
 // equivalent ones, because "byte-identical" is a property that decays the moment
 // two call sites each write their own message.
 // ----------------------------------------------------------------------------
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { antennaAdmin } from '@/lib/antenna/db';
-import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
+import { BeeError } from '@/lib/antenna/errors';
 import { resolveMemberSession } from '@/lib/antenna/member';
-import { parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
+import { memberErrorResponse, memberJson, parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -99,8 +99,8 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
       });
     }
 
-    return NextResponse.json({ room, ...shapePage(messageRows, agents, page) });
+    return memberJson({ room, ...shapePage(messageRows, agents, page) });
   } catch (err) {
-    return beeErrorResponse(err);
+    return memberErrorResponse(err);
   }
 }

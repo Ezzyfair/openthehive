@@ -14,12 +14,12 @@
 // Replaces the browser's anon-key read at app/honeycombs/[id]/page.tsx:86-116,
 // which had no session and no ownership check at all.
 // ----------------------------------------------------------------------------
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { getOwnChamberId } from '@/lib/antenna/chamber';
 import { antennaAdmin } from '@/lib/antenna/db';
-import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
+import { BeeError } from '@/lib/antenna/errors';
 import { ownedAgentId, resolveMemberSession } from '@/lib/antenna/member';
-import { parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
+import { memberErrorResponse, memberJson, parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       chamberId = await getOwnChamberId(agentId);
     } catch (err) {
       if (err instanceof BeeError && err.code === 'no_chamber') {
-        return NextResponse.json({
+        return memberJson({
           chamber: null,
           messages: [],
           next_cursor: page.cursor,
@@ -61,14 +61,42 @@ export async function GET(req: NextRequest) {
 
     const admin = antennaAdmin();
 
+    // The bee's own status, so the chamber view can fire the graduation confetti off a
+    // server read instead of a browser anon-key poll (commit 4 fix 3).
+    const { data: agentRow } = await admin
+      .from('agents')
+      .select('status')
+      .eq('id', agentId)
+      .maybeSingle();
+    const agentStatus = (agentRow as { status: string | null } | null)?.status ?? null;
+
+    // Carry-in 8 (Nikita 001b LOW) — belt and braces. getOwnChamberId already resolved
+    // this id BY creator_id, so this predicate is redundant today. It is here because
+    // the invariant was spread across two files: anyone who later changes how chamberId
+    // is obtained would break ownership without touching this query. Now the ownership
+    // check is local to the read that returns the data.
     const { data: chamber, error: chamberErr } = await admin
       .from('honeycombs')
       .select('id, title, description, message_count, last_activity_at')
       .eq('id', chamberId)
+      .eq('creator_id', agentId)
       .maybeSingle();
     if (chamberErr) {
       console.error('member chamber: honeycomb read failed', chamberErr.message);
       throw new BeeError(500, 'internal_error', 'chamber could not be read');
+    }
+    // No row means the chamber stopped belonging to this agent between the two reads —
+    // or never did. That is indistinguishable from having no chamber, and answering the
+    // C3 shape is the right answer: NOT a 500, which would report a fault that is not
+    // one, and NOT the chamber, which is the whole point of the predicate above.
+    if (!chamber) {
+      return memberJson({
+        chamber: null,
+        messages: [],
+        next_cursor: page.cursor,
+        has_more: false,
+        hint: NO_CHAMBER_HINT,
+      });
     }
 
     // moderation_status is an ALLOW-LIST, never a deny-list. messages.moderation_status
@@ -108,8 +136,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ chamber: chamber ?? null, ...shapePage(messageRows, agents, page) });
+    return memberJson({ chamber, agent_status: agentStatus, ...shapePage(messageRows, agents, page) });
   } catch (err) {
-    return beeErrorResponse(err);
+    return memberErrorResponse(err);
   }
 }

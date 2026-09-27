@@ -13,10 +13,11 @@
 // anonymous visitors by the PUBLIC surface, which is commit 3's business, not this
 // route's; this route answers members only).
 // ----------------------------------------------------------------------------
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { antennaAdmin } from '@/lib/antenna/db';
-import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
+import { BeeError } from '@/lib/antenna/errors';
 import { resolveMemberSession } from '@/lib/antenna/member';
+import { memberErrorResponse, memberJson } from '@/lib/member-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,8 +43,8 @@ export async function GET(req: NextRequest) {
       throw new BeeError(500, 'internal_error', 'rooms could not be read');
     }
 
-    return NextResponse.json({ rooms: data ?? [] });
+    return memberJson({ rooms: data ?? [] });
   } catch (err) {
-    return beeErrorResponse(err);
+    return memberErrorResponse(err);
   }
 }

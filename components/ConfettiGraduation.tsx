@@ -1,14 +1,23 @@
-// ConfettiGraduation.tsx — fires when bee status flips to 'active'
+// ConfettiGraduation.tsx — fires when the bee's status flips to 'active'.
 'use client';
+//
+// HUMAN-WINDOW-001 commit 4, fix 3. THE TRIGGER IS UNCHANGED: graduation is still
+// agents.status becoming 'active'. What changed is the transport. This component used to
+// hold its own anon-key Supabase client and poll `agents` every 5 s from the browser —
+// the last such reader in the tree. It now takes the answer as a prop, and the caller
+// gets it from a server route it is already polling, so the whole component is one
+// boolean edge and a canvas.
+//
+// Reported honestly in the packet: on main this component was IMPORTED by
+// app/honeycombs/[id]/page.tsx and never rendered, so the trigger it "had on the old
+// chamber page" was no trigger at all. The trigger reproduced here is the one the
+// component itself implemented.
 import { useEffect, useRef, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-interface Props { agentId: string; }
+interface Props {
+  /** True once the bee's status is 'active'. The false -> true edge fires the confetti. */
+  graduated: boolean;
+}
 
 const COLORS = ['#E2C46A','#C9A84C','#F2EDE4','#1E1610','#E2C46A','#C9A84C'];
 
@@ -50,24 +59,19 @@ function fireWave(canvas: HTMLCanvasElement) {
   draw();
 }
 
-export default function ConfettiGraduation({ agentId }: Props) {
+export default function ConfettiGraduation({ graduated }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [graduated, setGraduated] = useState(false);
   const [show, setShow] = useState(false);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const firedRef = useRef(false);
 
   useEffect(() => {
-    if (!agentId || graduated) return;
-    pollRef.current = setInterval(async () => {
-      const { data } = await supabase
-        .from('agents')
-        .select('status')
-        .eq('id', agentId)
-        .single();
-      if (data?.status === 'active') {
-        setGraduated(true);
-        setShow(true);
-        clearInterval(pollRef.current!);
+    // The EDGE, not the value: fires once when graduated first becomes true, so a view
+    // that keeps polling a graduated bee does not re-fire the confetti every 5 s.
+    if (!graduated || firedRef.current) return;
+    firedRef.current = true;
+    setShow(true);
+    {
+      {
         // Three waves 3s apart
         const canvas = canvasRef.current;
         if (!canvas) return;
@@ -94,9 +98,8 @@ export default function ConfettiGraduation({ agentId }: Props) {
         // Hide after 8s
         setTimeout(() => setShow(false), 8000);
       }
-    }, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [agentId, graduated]);
+    }
+  }, [graduated]);
 
   if (!show) return null;
   return (

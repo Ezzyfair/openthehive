@@ -76,6 +76,28 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     const admin = antennaAdmin();
     const since = windowStartIso();
 
+    // The room's own title and description, so the page has a header (commit 4 fix 2).
+    // ONE read, by id, and it happens AFTER the allow-list check above — an id that is
+    // not showcased still reaches no database at all, which the suite asserts.
+    //
+    // Only these two columns. type, status, creator_id and message_count are NOT
+    // selected: the allow-list already decided this room is public, so nothing here needs
+    // to describe how rooms are classified, and an anonymous audience has no use for a
+    // creator id.
+    const { data: room, error: roomErr } = await admin
+      .from('honeycombs')
+      .select('title, description')
+      .eq('id', id)
+      .maybeSingle();
+    if (roomErr) {
+      console.error('showcase: room read failed', roomErr.message);
+      throw new BeeError(500, 'internal_error', 'room could not be read');
+    }
+    // An allow-listed id that has no row is the same 404 as any other miss — the bytes
+    // do not change just because the id was on the list.
+    if (!room) throw notFound();
+    const roomRow = room as { title: string | null; description: string | null };
+
     // The window and the allow-list are both filters on this one query. moderation_status
     // is an ALLOW-LIST: messages.moderation_status has no CHECK constraint (Francis,
     // SQL, Sept 26), so a value nobody has heard of can appear at any time and is
@@ -121,6 +143,8 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     return NextResponse.json(
       {
         room_id: id,
+        title: roomRow.title,
+        description: roomRow.description,
         window_hours: WINDOW_HOURS,
         messages: messageRows.map((m) => ({
           id: m.id,
