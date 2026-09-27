@@ -189,18 +189,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           Autonomous Agent Evolution
         </p>
 
-        {/* Bee + hex frame */}
-        <div
-          onPointerDown={startHold}
-          onPointerUp={cancelHold}
-          onPointerLeave={cancelHold}
-          onClick={() => { if (!beePanic) { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); } }}
-          style={{
-            position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, cursor:'pointer',
-            animation: beePanic ? 'none' : 'bee-pulse 5s ease-in-out infinite',
-            transform: `translate(${beeOffset.x}px, ${beeOffset.y}px) scale(${beeScale}) rotate(${beeRotation}deg)`,
-            transition: !beePanic ? 'transform 0.5s cubic-bezier(0.34,1.56,0.64,1), opacity 0.2s' : 'none',
-          }}>
+        {/* Hex frame — stays put always */}
+        <div style={{ position:'relative', width:264, height:264, margin:'0 auto 44px', zIndex:1, animation:'bee-pulse 5s ease-in-out infinite' }}>
           <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 220 220">
             <defs><linearGradient id="gg" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#E2C46A"/><stop offset="100%" stopColor="#7A5C10"/>
@@ -210,19 +200,33 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
               <line key={i} x1={p1.split(',')[0]} y1={p1.split(',')[1]} x2={p2.split(',')[0]} y2={p2.split(',')[1]} stroke="#C9A84C" strokeWidth="2"/>
             ))}
           </svg>
-          <Image
-            src="/hive-bee.webp" alt="The Hive"
-            width={220} height={220}
+
+          {/* Bee only — breaks free on hold */}
+          <div
+            onPointerDown={startHold}
+            onPointerUp={cancelHold}
+            onPointerLeave={cancelHold}
+            onClick={() => { if (!beePanic) { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); } }}
             style={{
-              position:'absolute', top:'50%', left:'50%',
-              transform:'translate(-50%,-50%)',
-              objectFit:'contain', mixBlendMode:'multiply',
-              filter: beePanic ? 'drop-shadow(0 12px 60px rgba(201,168,76,1.0)) brightness(1.2)' : beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
-              animation: beePanic ? 'none' : beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
-              transition:'filter 0.2s',
-              maxWidth:'90%', maxHeight:'90%'
-            }}
-          />
+              position:'absolute', top:'50%', left:'50%', width:'90%', height:'90%',
+              zIndex:2, cursor:'pointer',
+              transform: `translate(calc(-50% + ${beeOffset.x}px), calc(-50% + ${beeOffset.y}px)) scale(${beeScale}) rotate(${beeRotation}deg)`,
+              transition: !beePanic ? 'transform 0.5s cubic-bezier(0.34,1.56,0.64,1)' : 'none',
+            }}>
+            <Image
+              src="/hive-bee.webp" alt="The Hive"
+              width={220} height={220}
+              style={{
+                position:'absolute', top:'50%', left:'50%',
+                transform:'translate(-50%,-50%)',
+                objectFit:'contain', mixBlendMode:'multiply',
+                filter: beePanic ? 'drop-shadow(0 12px 60px rgba(201,168,76,1.0)) brightness(1.2)' : beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
+                animation: beePanic ? 'none' : beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
+                transition:'filter 0.2s',
+                maxWidth:'100%', maxHeight:'100%'
+              }}
+            />
+          </div>
         </div>
 
         <h1 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(38px,8.5vw,100px)', fontWeight:300, lineHeight:1.02, letterSpacing:'-0.02em', color:'var(--charcoal)', marginBottom:10, position:'relative', wordBreak:'break-word', overflowWrap:'break-word', padding:'0 8px' }}>
