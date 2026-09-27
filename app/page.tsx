@@ -2,10 +2,12 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { createClient } from '@supabase/supabase-js';
 import HiveHomepageClient from '@/components/HiveHomepageClient';
+// One definition of the showcase ids (HUMAN-WINDOW-001 commit 3). This file and
+// app/api/public/showcase/[id]/route.ts must agree about which room is Dreamers, and
+// two literals in two files is how they stop agreeing.
+import { DREAMERS_CHAMBER_ID } from '@/lib/showcase';
 
 export const dynamic = 'force-dynamic';
-
-const DREAMERS_CHAMBER_ID = 'a6b07aa8-53bc-474b-8078-e30ee73c8ecd';
 
 async function getLiveData() {
   try {

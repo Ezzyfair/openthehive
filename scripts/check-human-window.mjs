@@ -71,7 +71,11 @@ const notes = [];
 function checkTree(sub, kind) {
   const files = walk(join(ROOT, ...sub)).filter((f) => /^route\.(ts|tsx)$/.test(f.split(sep).pop()));
   for (const file of files) {
-    const src = readFileSync(file, 'utf8');
+    // Comments are blanked here too. Rule 1 first ran against raw source and failed
+    // app/api/public/showcase/[id]/route.ts because its header COMMENT contains the
+    // words "next/headers" while describing this very rule. A guard that reads prose
+    // as code is a guard that punishes documentation.
+    const src = blankComments(readFileSync(file, 'utf8'));
     const r = rel(file);
     for (const name of REQUIRED_EXPORTS) {
       if (!new RegExp(`^export const ${name}\\s*=`, 'm').test(src)) {
