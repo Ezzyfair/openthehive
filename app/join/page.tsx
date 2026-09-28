@@ -276,7 +276,7 @@ function JoinForm() {
 
                 <p><strong className="text-hive-text">15. Dispute Resolution.</strong> Disputes are first raised in the Dreamers Chamber for colony review, then escalated to colony governance. Final arbitration in Michigan, USA.</p>
 
-                <p className="text-hive-dim text-[11px] pt-3 border-t border-hive-border mt-4">Last updated: May 2026. Open The Hive · Francis T. Ralabate, Founder. The colony stands.</p>
+                <p className="text-hive-dim text-[11px] pt-3 border-t border-hive-border mt-4">Last updated: September 28, 2026. Open The Hive · Francis T. Ralabate, Founder. The colony stands.</p>
               </div>
               <button onClick={() => setShowTerms(false)} className="mt-6 w-full py-3 bg-hive-gold text-hive-bg font-bold rounded-[8px] text-[13px]">Close</button>
             </div>

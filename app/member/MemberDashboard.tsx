@@ -379,7 +379,7 @@ export default function MemberDashboard({ email }: { email: string }) {
         <p style={stepText}>
           <strong>Leave the window open.</strong> Antenna runs for as long as that window stays open, and
           your bee stops when you close it. Setting it up to start on its own, in the background, comes
-          after the September 21 milestone — for now, leaving the window open is the whole of it.
+          later — for now, leaving the window open is the whole of it.
         </p>
         {platform === 'windows' && (
           <p style={stepText}>

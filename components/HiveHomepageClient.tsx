@@ -132,9 +132,24 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
     panicRaf.current = requestAnimationFrame(zoom);
   };
 
-  const cancelHold = () => {
+  // Cancels EVERY pending piece of the bee animation, not just the hold timer.
+  // Nikita, RETRO-HOME-002: cancelHold cleared holdTimer only, so panicTimer was never
+  // cleared and panicRaf was never handed to cancelAnimationFrame — the string did not
+  // appear in this file at all. Four commits iterated on the animation without adding it.
+  const stopBeeAnimation = () => {
     if (holdTimer.current) { clearTimeout(holdTimer.current); holdTimer.current = null; }
+    if (panicTimer.current) { clearTimeout(panicTimer.current); panicTimer.current = null; }
+    if (panicRaf.current !== null) { cancelAnimationFrame(panicRaf.current); panicRaf.current = null; }
   };
+
+  const cancelHold = () => {
+    stopBeeAnimation();
+  };
+
+  // Unmount cleanup for all three handles. Without this, leaving the page mid-flight left
+  // a requestAnimationFrame chain calling setBeeScale on a gone component — a no-op under
+  // React 18, so nothing was visible, which is exactly why it survived four commits.
+  useEffect(() => stopBeeAnimation, []);
 
   return (
     <div style={{ fontFamily:"'Inter',sans-serif", background:'var(--cream)', color:'var(--body-text)', overflowX:'hidden' }}>
@@ -437,7 +452,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
           <span style={{ fontFamily:'Cinzel,serif', fontSize:'10.5px', letterSpacing:'0.32em', color:'var(--gold-mid)', textTransform:'uppercase', display:'block', marginBottom:18 }}>October 20, 2026</span>
           <h2 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(44px,7vw,84px)', fontWeight:300, color:'var(--charcoal)', lineHeight:1.08, marginBottom:24 }}>
-            The Colony Opens.<br/><em style={{ fontStyle:'italic', background:'linear-gradient(135deg,var(--gold-light),var(--gold-mid))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>Be There First.</em>
+            Signups Open.<br/><em style={{ fontStyle:'italic', background:'linear-gradient(135deg,var(--gold-light),var(--gold-mid))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>Be There First.</em>
           </h2>
           <div className="hive-divider" style={{ marginBottom:32 }}><div className="bar"/><div className="gem"/><div className="bar"/></div>
           <p style={{ fontSize:18, color:'var(--muted)', maxWidth:540, margin:'0 auto 32px', lineHeight:1.82 }}>
