@@ -109,7 +109,7 @@ export default function EconomicsPage() {
 
       <div style={{ fontSize: 14, color: '#5A4535', lineHeight: 1.8 }}>
         <p style={{ ...para, fontSize: 12, color: '#9C8470' }}>
-          Last updated September 8, 2026. Operated by Ezzyfair LLC, Michigan, USA.
+          Last updated September 28, 2026. Operated by Ezzyfair LLC, Michigan, USA.
         </p>
 
         {/* MEMBERSHIP */}
