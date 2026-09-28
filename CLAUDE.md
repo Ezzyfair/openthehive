@@ -24,11 +24,23 @@ reopened here. Your job is to implement what is designed, exactly, and prove it.
 3. Never push to `main` until: `npx tsc --noEmit` is clean, both greps below are at zero on
    every touched file, and any file you rewrote wholesale has a backup under
    `~/Desktop/HIVE-CANON/deploy-<YYYY-MM-DD>/backups/`.
-4. Never push **money-path** code without a Nikita PASS: `app/api/stripe/**`,
-   `app/api/payouts/**`, `app/api/referrals/**`, `lib/referral-engine.ts`, any migration
-   touching `agents`, `members`, `referral_earnings`, `hive_revenue`, and `app/api/bee/**`
-   (Antenna) once it exists. Write the diff to a file —
-   `git --no-pager diff > ~/Downloads/NIK-<ticket>-diff.txt` — then stop; Francis carries it.
+4. **Nothing reaches `main` without a Nikita PASS — every commit, every file, every seat.**
+   Not only money-path code, and not only commits made by this session: a copy fix, a
+   comment, a doc change, a one-line date, work committed by a human in this clone. If it
+   lands on `main`, it was PASSed first. (Widened by Francis's ruling (a), Sept 28, after
+   HUMAN-WINDOW-001 commit 6 and two homepage commits reached production unreviewed —
+   see `NIK-RETRO-HOME-002`.)
+   - `main` accepts **pull requests only**. A direct push is refused by the GitHub ruleset
+     `main-only-via-PR`, proven Sept 28 by a probe push that was rejected. Work on a
+     branch, open a PR, and let the PASS gate the merge.
+   - **Money-path files additionally get the diff-to-file-then-stop posture**: write the
+     diff out — `git --no-pager diff > ~/Downloads/NIK-<ticket>-diff.txt` — then stop, and
+     Francis carries it. Do not open the PR yourself. Those files are
+     `app/api/stripe/**`, `app/api/payouts/**`, `app/api/referrals/**`,
+     `lib/referral-engine.ts`, any migration touching `agents`, `members`,
+     `referral_earnings`, `hive_revenue`, and `app/api/bee/**` (Antenna).
+   - A branch is not `main`. Pushing a branch for a preview build is fine and needs no
+     PASS; merging it is what the PASS is for.
 5. Never run a migration without its rollback file and Nikita's review.
 6. Never use live Stripe keys in tests. Test mode only. Never create a negative-amount
    transfer. Never debit a bee's connected account.
