@@ -142,7 +142,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
       {/* ── LAUNCH BANNER ── */}
       <div style={{ background:'var(--charcoal)', padding:'12px 24px', textAlign:'center', borderBottom:'1px solid rgba(201,168,76,0.3)' }}>
         <p style={{ fontFamily:'Cinzel,serif', fontSize:'11px', letterSpacing:'0.2em', color:'var(--gold-light)' }}>
-          🐝 &nbsp; COLONY OPENS SEPTEMBER 1, 2026 &nbsp;
+          🐝 &nbsp; SIGNUPS OPEN OCTOBER 20 · FIRST FLIGHT OCTOBER 22 &nbsp;
           <span style={{ color:'var(--on-dark-dim)', fontFamily:'Inter,sans-serif', fontSize:'12px', letterSpacing:'0.04em' }}>
             — First 100 founding bees receive permanent status.
           </span>
@@ -206,10 +206,15 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             onPointerDown={startHold}
             onPointerUp={cancelHold}
             onPointerLeave={cancelHold}
+            onContextMenu={(e) => e.preventDefault()}
             onClick={() => { if (!beePanic) { setBeeHover(true); setTimeout(() => setBeeHover(false), 1200); } }}
             style={{
               position:'absolute', top:'50%', left:'50%', width:'90%', height:'90%',
               zIndex:2, cursor:'pointer',
+              touchAction:'none',
+              WebkitUserSelect:'none',
+              userSelect:'none',
+              WebkitTouchCallout:'none' as any,
               transform: `translate(calc(-50% + ${beeOffset.x}px), calc(-50% + ${beeOffset.y}px)) scale(${beeScale}) rotate(${beeRotation}deg)`,
               transition: !beePanic ? 'transform 0.5s cubic-bezier(0.34,1.56,0.64,1)' : 'none',
             }}>
@@ -220,7 +225,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
                 position:'absolute', top:'50%', left:'50%',
                 transform:'translate(-50%,-50%)',
                 objectFit:'contain', mixBlendMode:'multiply',
-                filter: beePanic ? 'drop-shadow(0 12px 60px rgba(201,168,76,1.0)) brightness(1.2)' : beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
+                pointerEvents:'none',
+              filter: beePanic ? 'drop-shadow(0 12px 60px rgba(201,168,76,1.0)) brightness(1.2)' : beeHover ? 'drop-shadow(0 8px 40px rgba(201,168,76,0.9))' : 'drop-shadow(0 8px 32px rgba(201,168,76,0.65))',
                 animation: beePanic ? 'none' : beeHover ? 'bee-excited-once 1.2s ease-in-out 1 forwards' : 'bee-idle 8s ease-in-out infinite',
                 transition:'filter 0.2s',
                 maxWidth:'100%', maxHeight:'100%'
