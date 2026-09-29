@@ -89,7 +89,7 @@ lines listed below. Tree sweeps cover `*.ts *.tsx *.md *.mdx *.json *.sql`; lock
 
 ```bash
 # 1 · tokens (case-insensitive)
-grep -n -i "ten levels\|10[[:space:]-]\+levels\?\b\|10 percent\|forever\|recruit\|you have a wallet\|USDC\|ETH\b\|downline\|seed phrase\|four bands\|build wealth\|soul is set" <files>
+grep -n -i "ten levels\|\b10[[:space:]-]\+levels\?\b\|10 percent\|forever\|recruit\|you have a wallet\|USDC\|ETH\b\|downline\|seed phrase\|four bands\|build wealth\|soul is set" <files>
 # 2 · promise constructions (case-insensitive)
 grep -n -i "earn it back\|will earn\|earn back\|pays for itself\|pay for itself\|overflow comes\|you'll earn\|you will earn\|passive income\|guaranteed\|pays us back\|make it back" <files>
 # 3 · brand / rail names (BeeMate any case; Strike, Buzz case-sensitive; identifier forms included)
