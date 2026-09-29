@@ -21,7 +21,7 @@ reopened here. Your job is to implement what is designed, exactly, and prove it.
 1. Never `git add -A` or `git add .`. Stage explicit paths only.
 2. Never read, print, copy, or commit `.env*` or any secret. Never put a key in chat, a
    log, or a file. This repo has no `.env`; secrets live in Vercel.
-3. Never push to `main` until: `npx tsc --noEmit` is clean, both greps below are at zero on
+3. Never push to `main` until: `npx tsc --noEmit` is clean, all three greps below are at zero on
    every touched file, and any file you rewrote wholesale has a backup under
    `~/Desktop/HIVE-CANON/deploy-<YYYY-MM-DD>/backups/`.
 4. **Nothing reaches `main` without a Nikita PASS — every commit, every file, every seat.**
@@ -55,7 +55,7 @@ reopened here. Your job is to implement what is designed, exactly, and prove it.
 - Measure first: read the file, `git log -3 -- <file>`, grep for other call sites.
 - Exact, minimal edits. No drive-by refactors, no formatting sweeps, no renamed variables
   "while you're there."
-- Before every commit: `npx tsc --noEmit 2>&1 | grep -v "npm notice"`, then both greps.
+- Before every commit: `npx tsc --noEmit 2>&1 | grep -v "npm notice"`, then all three greps.
 - Commit messages: `type(scope): what — why` (feat / fix / chore / docs). Name the ticket
   (NIK-…, FIND-…, checklist section) when there is one.
 - After every push: report the commit sha and the proof (curl, grep, SQL, test output).
@@ -83,15 +83,23 @@ reopened here. Your job is to implement what is designed, exactly, and prove it.
 - Worker Bee vault = 33 skills; AWAKEN's six open at Honey Maker. Say counts with their tier.
 - Soul copy: *"The colony will know you as X"* — never *"Your soul is set."*
 
-## The two greps (touched files only; expected zero hits except `/economics`, the IDS text,
-and `CLAUDE.md` itself, which quotes the forbidden tokens to define them)
+## The three greps (touched files only; expected zero hits except `/economics`, the IDS text,
+`CLAUDE.md` itself (quotes the forbidden tokens to define them), and the permitted-after-review
+lines listed below. Tree sweeps cover `*.ts *.tsx *.md *.mdx *.json *.sql`; lock files excluded.)
 
 ```bash
-# tokens
-grep -n -i "ten levels\|10 percent\|forever\|recruit\|you have a wallet\|USDC\|ETH\b\|downline\|seed phrase\|four bands\|build wealth\|soul is set" <files>
-# promise constructions
+# 1 · tokens (case-insensitive)
+grep -n -i "ten levels\|10[[:space:]-]\+levels\?\b\|10 percent\|forever\|recruit\|you have a wallet\|USDC\|ETH\b\|downline\|seed phrase\|four bands\|build wealth\|soul is set" <files>
+# 2 · promise constructions (case-insensitive)
 grep -n -i "earn it back\|will earn\|earn back\|pays for itself\|pay for itself\|overflow comes\|you'll earn\|you will earn\|passive income\|guaranteed\|pays us back\|make it back" <files>
+# 3 · brand / rail names (BeeMate any case; Strike, Buzz case-sensitive; identifier forms included)
+grep -n -P '(?i)\bbeemates?\b|(?-i)\bStrike\b|\bBuzz\b|\bBEEMATE|\bSTRIKE_|_STRIKE\b|\bBUZZ_|_BUZZ\b' <files>
 ```
+
+Permitted-after-review (grep 3 hits that stay, reviewer confirms the line is unchanged):
+- `components/HiveHomepageClient.tsx:309` — Block's product Buzz, past-tense factual claim.
+- `app/api/payouts/route.ts:92, :93, :100` — Strike/ETH rail text, open under checklist C rail
+  cutover; goes to zero when Stripe Connect lands.
 
 ## Where things are
 
