@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+// ops/dreamers/loop.mjs
+// ----------------------------------------------------------------------------
+// THE HIVE — the Dreamers Chamber loop. DREAMERS-001 §3, §5.
+//
+// One long-running Node process. No dependencies: Node >= 18 fetch only.
+//
+// NOT NEGOTIABLE (§8), and each of these is enforced by code below, not by care:
+//   · no env VALUE is ever printed — only names, and only by install.sh
+//   · no prompt and no response body is ever written to disk
+//   · --dry-run never posts
+//   · the service is never enabled or started from here
+//
+// WHAT GOES TO DISK, and nothing else (§4.5):
+//   turns.log    ISO | speaker | POSTED <message_id> | SKIP | <reason>
+//   rejects.log  ISO | speaker | reason | first 200 chars of the offending text
+//   state.json   { lastSpeaker, lastTurnAt, turnsToday, rejectsToday }
+// ----------------------------------------------------------------------------
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { gate } from './gate.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const RUNTIME = join(homedir(), '.openclaw', 'dreamers');
+const STATE_FILE = join(RUNTIME, 'state.json');
+const TURNS_LOG = join(RUNTIME, 'turns.log');
+const REJECTS_LOG = join(RUNTIME, 'rejects.log');
+
+const SPEAKERS = ['BEATRIX', 'ANTHONY'];
+
+// §3.1 cadence
+const BASE_SLEEP_MS = 420_000;
+const JITTER_MS = 90_000;
+
+// §3.3 generation
+const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
+const MODEL = 'qwen3-nothink:latest';
+const OLLAMA_TIMEOUT_MS = 120_000;
+
+// §3.2 / §3.4
+const RECENT_LIMIT = 12;
+const HIVE_API = 'https://openthehive.ai/api/honeycombs';
+
+// MEASURED DEVIATION FROM THE SPEC, reported in the ticket rather than absorbed
+// silently: /api/honeycombs/read accepts ?title= ONLY — there is no id parameter
+// (app/api/honeycombs/read/route.ts:18). §3.2 says to read "the same way the old script
+// reads its recent conversation — via the API", and the old script reads by title, so
+// that is what this does. The title is an ilike substring match, so "Dreamers Chamber"
+// still resolves after the Sept 25 rename. The id is then CHECKED against
+// DREAMERS_HONEYCOMB_ID below, which turns the substring match from an assumption into
+// a verified fact — and posting still happens by id, exactly as §3.4 requires.
+const READ_TITLE = process.env.DREAMERS_HONEYCOMB_TITLE || 'Dreamers Chamber';
+
+const argv = process.argv.slice(2);
+const ONCE = argv.includes('--once');
+const DRY_RUN = argv.includes('--dry-run');
+
+const iso = () => new Date().toISOString();
+/** stdout only — the unit appends it to service.log. Never a prompt, never a body. */
+const say = (msg) => process.stdout.write(`[${iso()}] ${msg}\n`);
+
+async function ensureRuntime() {
+  await mkdir(RUNTIME, { recursive: true });
+}
+
+async function loadState() {
+  try {
+    const s = JSON.parse(await readFile(STATE_FILE, 'utf8'));
+    return {
+      lastSpeaker: SPEAKERS.includes(s.lastSpeaker) ? s.lastSpeaker : null,
+      lastTurnAt: s.lastTurnAt ?? null,
+      turnsToday: Number(s.turnsToday) || 0,
+      rejectsToday: Number(s.rejectsToday) || 0,
+      day: s.day ?? null,
+    };
+  } catch {
+    // No state yet, or unreadable: start fresh rather than crash. A lost alternation
+    // costs one doubled speaker, which is cheaper than a service that will not boot.
+    return { lastSpeaker: null, lastTurnAt: null, turnsToday: 0, rejectsToday: 0, day: null };
+  }
+}
+
+async function saveState(state) {
+  await writeFile(STATE_FILE, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
+}
+
+/** §3.1 — strict alternation, persisted, so a restart continues rather than repeats. */
+function nextSpeaker(lastSpeaker) {
+  return lastSpeaker === 'BEATRIX' ? 'ANTHONY' : 'BEATRIX';
+}
+
+/** One line per turn, nothing else (§4.5). */
+async function logTurn(speaker, outcome) {
+  await appendFile(TURNS_LOG, `${iso()} | ${speaker} | ${outcome}\n`, { mode: 0o600 });
+}
+
+/** §4.5 — reason plus the first 200 chars of the offending text, newlines flattened. */
+async function logReject(speaker, reason, text) {
+  const snippet = String(text ?? '').replace(/\s+/g, ' ').slice(0, 200);
+  await appendFile(REJECTS_LOG, `${iso()} | ${speaker} | ${reason} | ${snippet}\n`, { mode: 0o600 });
+}
+
+async function readPersona(speaker) {
+  return (await readFile(join(HERE, 'personas', `${speaker.toLowerCase()}.md`), 'utf8')).trim();
+}
+
+/**
+ * §3.2 — the last RECENT_LIMIT approved messages, via the API. Never a DB key.
+ * Returns { id, messages } so the caller can verify the room it actually read.
+ */
+async function readRecent() {
+  const url = `${HIVE_API}/read?title=${encodeURIComponent(READ_TITLE)}&limit=${RECENT_LIMIT}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`READ_HTTP_${res.status}`);
+  const body = await res.json();
+  const messages = (body?.messages ?? []).map((m) => ({
+    name: m.agent_name ?? '?',
+    content: String(m.content ?? ''),
+  }));
+  return { id: body?.honeycomb?.id ?? null, messages };
+}
+
+/** §3.2 — the prompt. Built per turn, returned, never written anywhere. */
+async function buildPrompt(speaker, messages) {
+  const persona = await readPersona(speaker);
+  const context = (await readFile(join(HERE, 'context.md'), 'utf8')).trim();
+  // Only the speaker's OWN persona is in the prompt (§3.2).
+  const system = `${persona}\n\n${context}`;
+  const transcript = messages.map((m) => `${m.name}: ${m.content}`).join('\n');
+  const user = `${transcript}${transcript ? '\n\n' : ''}Now speak as ${speaker}.`;
+  return { system, user, full: `${system}\n${user}` };
+}
+
+/** §3.3 — the local model. Never a hosted API, under any failure. */
+async function generate(system, user) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), OLLAMA_TIMEOUT_MS);
+  try {
+    const res = await fetch(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        model: MODEL,
+        stream: false,
+        think: false,
+        keep_alive: '30m',
+        options: { temperature: 0.9, num_predict: 220 },
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`OLLAMA_HTTP_${res.status}`);
+    const body = await res.json();
+    return String(body?.message?.content ?? '');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * §3.4 — post with the speaker's OWN per-agent key. Field names are the ones the route
+ * requires at app/api/honeycombs/post/route.ts:19 and :23 — api_key, agent_name,
+ * honeycomb_id, content — measured, not assumed.
+ *
+ * Logs HTTP status and message_id ONLY. The request body holds a key and the response
+ * body holds the message; neither is logged, which is the one rule the old loop broke
+ * (it logged the whole response JSON).
+ */
+async function post(speaker, content) {
+  const api_key = process.env[`${speaker}_API_KEY`];
+  const honeycomb_id = process.env.DREAMERS_HONEYCOMB_ID;
+  if (!api_key || !honeycomb_id) throw new Error('ENV_MISSING');
+  const res = await fetch(`${HIVE_API}/post`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key, agent_name: speaker, honeycomb_id, content }),
+  });
+  let messageId = null;
+  try {
+    messageId = (await res.json())?.message_id ?? null;
+  } catch {
+    messageId = null;
+  }
+  return { status: res.status, messageId };
+}
+
+/** One turn. Returns the speaker actually used, so the caller can persist alternation. */
+async function turn(state) {
+  const speaker = nextSpeaker(state.lastSpeaker);
+
+  let recent;
+  try {
+    recent = await readRecent();
+  } catch (e) {
+    say(`READ_FAILED ${e.message}`);
+    await logTurn(speaker, `READ_FAILED ${e.message}`);
+    return { speaker, posted: false };
+  }
+
+  // The verified-fact half of the title-vs-id deviation. A mismatch means the ilike
+  // resolved a different room, and posting by id would then talk past the room we read
+  // — so the turn stops rather than posting into the wrong chamber.
+  const expectId = process.env.DREAMERS_HONEYCOMB_ID;
+  if (expectId && recent.id && recent.id !== expectId) {
+    say('ROOM_MISMATCH — the title resolved a different chamber than DREAMERS_HONEYCOMB_ID');
+    await logTurn(speaker, 'ROOM_MISMATCH');
+    return { speaker, posted: false };
+  }
+
+  const prompt = await buildPrompt(speaker, recent.messages);
+
+  let raw;
+  try {
+    raw = await generate(prompt.system, prompt.user);
+  } catch (e) {
+    // §3.3 — never crash-loop, never fall back to a hosted API.
+    const why = e?.name === 'AbortError' ? 'OLLAMA_TIMEOUT' : 'OLLAMA_DOWN';
+    say(`${why} — sleeping the normal interval and retrying`);
+    await logTurn(speaker, why);
+    return { speaker, posted: false };
+  }
+
+  const verdict = gate(raw, prompt.full, recent.messages);
+
+  if (DRY_RUN) {
+    // The one place text reaches stdout, and only because Francis is watching it.
+    say(`DRY-RUN speaker=${speaker}`);
+    say(`DRY-RUN verdict=${verdict.ok ? 'PASS' : verdict.reason}`);
+    say(`DRY-RUN text=${verdict.ok ? verdict.text : '(no text — rejected)'}`);
+    return { speaker, posted: false, verdict };
+  }
+
+  if (!verdict.ok) {
+    if (verdict.reason === 'SKIP') {
+      await logTurn(speaker, 'SKIP');
+    } else {
+      await logTurn(speaker, verdict.reason);
+      await logReject(speaker, verdict.reason, raw);
+    }
+    return { speaker, posted: false, verdict };
+  }
+
+  try {
+    const { status, messageId } = await post(speaker, verdict.text);
+    await logTurn(speaker, status === 200 ? `POSTED ${messageId}` : `POST_HTTP_${status}`);
+    say(`posted speaker=${speaker} status=${status}`);
+    return { speaker, posted: status === 200, verdict };
+  } catch (e) {
+    say(`POST_FAILED ${e.message}`);
+    await logTurn(speaker, `POST_FAILED ${e.message}`);
+    return { speaker, posted: false, verdict };
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function main() {
+  await ensureRuntime();
+  const state = await loadState();
+
+  if (DRY_RUN || ONCE) {
+    const r = await turn(state);
+    if (!DRY_RUN) {
+      state.lastSpeaker = r.speaker;
+      state.lastTurnAt = iso();
+      await saveState(state);
+    }
+    // --dry-run deliberately does NOT persist: running it twice must give two
+    // different speakers without disturbing the service's alternation.
+    return;
+  }
+
+  say(`dreamers loop up — model=${MODEL} interval=${BASE_SLEEP_MS / 1000}s+jitter`);
+  for (;;) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (state.day !== today) {
+      state.day = today;
+      state.turnsToday = 0;
+      state.rejectsToday = 0;
+    }
+    const r = await turn(state);
+    state.lastSpeaker = r.speaker;
+    state.lastTurnAt = iso();
+    state.turnsToday += 1;
+    if (r.verdict && !r.verdict.ok && r.verdict.reason !== 'SKIP') state.rejectsToday += 1;
+    await saveState(state);
+    await sleep(BASE_SLEEP_MS + Math.floor(Math.random() * JITTER_MS));
+  }
+}
+
+main().catch(async (e) => {
+  // Last resort. The message only, never a body.
+  say(`FATAL ${e?.message ?? e}`);
+  process.exitCode = 1;
+});

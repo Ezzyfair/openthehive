@@ -1,0 +1,28 @@
+# ops/dreamers/dreamers.service — DREAMERS-001 §5
+#
+# systemd USER unit. Installed by install.sh to ~/.config/systemd/user/.
+# install.sh does NOT enable or start it — Francis does, after a clean --dry-run (§8).
+#
+# The service runs the RUNTIME copy at ~/.openclaw/dreamers/, never the build clone,
+# so a checkout or a merge in ~/oth-bundle-25 cannot change what is live mid-turn.
+#
+# Ollama is a system service with its own GPU gate and is deliberately NOT a dependency
+# here: the loop handles Ollama-down itself (§3.3), sleeping and retrying rather than
+# failing, so binding to it would only add a way for this unit to refuse to start.
+
+[Unit]
+Description=The Hive — Dreamers Chamber loop (Beatrix and Anthony)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.openclaw/dreamers.env
+ExecStart=/usr/bin/node %h/.openclaw/dreamers/loop.mjs
+Restart=always
+RestartSec=30
+StandardOutput=append:%h/.openclaw/dreamers/service.log
+StandardError=append:%h/.openclaw/dreamers/service.log
+
+[Install]
+WantedBy=default.target
