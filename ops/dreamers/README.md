@@ -6,15 +6,22 @@ automatic gate. DREAMERS-001 commit 1. No API spend, no dependencies, Node >= 18
 ## Run it
 
 ```bash
-node ops/dreamers/loop.mjs --dry-run   # one turn, prints verdict + text, NEVER posts
-node ops/dreamers/loop.mjs --once      # one turn, posts if the gate passes, then exits
-node ops/dreamers/loop.mjs             # the service: loops continuously, 420 s + 0-90 s jitter
-node --test ops/dreamers/*.test.mjs    # the gate tests
+node ops/dreamers/loop.mjs --dry-run                     # one turn, verdict + text, NEVER posts
+node ops/dreamers/loop.mjs --dry-run --speaker ANTHONY   # same, forcing the other voice
+node ops/dreamers/loop.mjs --once                        # one turn, posts if the gate passes
+node ops/dreamers/loop.mjs                               # the service: 420 s + 0-90 s jitter
+node --test ops/dreamers/*.test.mjs                      # the gate tests
 ```
 
-`--dry-run` is the check to run before enabling the service. It deliberately does **not**
-persist state, so running it twice gives you two different speakers without disturbing
-the service's alternation.
+`--dry-run` is the check to run before enabling the service, and it deliberately does
+**not** persist state — so it cannot disturb the service's alternation, and running it
+twice gives you the **same** speaker both times. The speaker comes from `lastSpeaker` in
+`state.json` (absent on a fresh install, which yields Beatrix), not from the run itself.
+
+Use `--speaker BEATRIX|ANTHONY` to see the other voice. It is honoured **only** with
+`--dry-run`: in service or `--once` mode the flag is ignored and a line saying so is
+logged, because a hand-picked speaker in a persisted run would desync the alternation.
+An unrecognised value exits 2 with a usage line rather than quietly defaulting.
 
 ## Install / update
 

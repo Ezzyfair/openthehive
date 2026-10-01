@@ -57,6 +57,31 @@ const argv = process.argv.slice(2);
 const ONCE = argv.includes('--once');
 const DRY_RUN = argv.includes('--dry-run');
 
+const USAGE = 'usage: loop.mjs [--once] [--dry-run] [--speaker BEATRIX|ANTHONY]';
+
+/**
+ * --speaker, honoured ONLY with --dry-run.
+ *
+ * It exists because --dry-run deliberately does not persist state, so repeated dry-runs
+ * keep answering with the same speaker; this is how Francis sees the other voice without
+ * touching the service's alternation. In service or --once mode the flag is IGNORED and
+ * noted, never obeyed — a hand-picked speaker in a persisted run would desync the
+ * alternation §3.1 exists to keep.
+ *
+ * An unparseable value exits 2 rather than falling back to a default: a typo that
+ * silently gave you Beatrix when you asked for Anthony would make the dry-run lie.
+ */
+const OVERRIDE_SPEAKER = (() => {
+  const i = argv.indexOf('--speaker');
+  if (i === -1) return null;
+  const raw = (argv[i + 1] ?? '').toUpperCase();
+  if (!SPEAKERS.includes(raw)) {
+    process.stderr.write(`--speaker must be BEATRIX or ANTHONY\n${USAGE}\n`);
+    process.exit(2);
+  }
+  return raw;
+})();
+
 const iso = () => new Date().toISOString();
 /** stdout only — the unit appends it to service.log. Never a prompt, never a body. */
 const say = (msg) => process.stdout.write(`[${iso()}] ${msg}\n`);
@@ -191,7 +216,8 @@ async function post(speaker, content) {
 
 /** One turn. Returns the speaker actually used, so the caller can persist alternation. */
 async function turn(state) {
-  const speaker = nextSpeaker(state.lastSpeaker);
+  // --speaker wins only in --dry-run (see OVERRIDE_SPEAKER); otherwise alternation holds.
+  const speaker = DRY_RUN && OVERRIDE_SPEAKER ? OVERRIDE_SPEAKER : nextSpeaker(state.lastSpeaker);
 
   let recent;
   try {
@@ -262,6 +288,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   await ensureRuntime();
   const state = await loadState();
+
+  if (OVERRIDE_SPEAKER && !DRY_RUN) {
+    say(`--speaker ${OVERRIDE_SPEAKER} IGNORED — it is honoured only with --dry-run`);
+  }
 
   if (DRY_RUN || ONCE) {
     const r = await turn(state);
