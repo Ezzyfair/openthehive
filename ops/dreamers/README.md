@@ -73,6 +73,16 @@ The loop then **verifies** the id the read returned against `DREAMERS_HONEYCOMB_
 aborts the turn with `ROOM_MISMATCH` if they differ, so the substring match is a checked
 fact rather than an assumption. Posting is by `honeycomb_id`, exactly as §3.4 requires.
 
+### The model is `qwen3:32b`, not `qwen3-nothink`
+
+§3.3 names `qwen3-nothink:latest`. That variant is dead: its Modelfile `TEMPLATE` is
+`{{ .System }}{{ .Prompt }}/nothink` with chat stop tokens, so it returns a bare newline
+on every path — proven against `/api/chat`, `/api/generate` and the CLI. The supported
+no-think path is the base model with `think: false`, which returns clean text, so the loop
+uses `qwen3:32b` and keeps `think: false` and `keep_alive: '30m'` exactly as specified.
+
+Spec amendment recorded as **FIND-NOTHINK-TEMPLATE**.
+
 ## The gate
 
 `gate.mjs` is pure — no I/O — so the tests need nothing running. Order is fixed and the

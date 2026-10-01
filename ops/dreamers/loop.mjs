@@ -36,7 +36,7 @@ const JITTER_MS = 90_000;
 
 // §3.3 generation
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/chat';
-const MODEL = 'qwen3-nothink:latest';
+const MODEL = 'qwen3:32b';
 const OLLAMA_TIMEOUT_MS = 120_000;
 
 // §3.2 / §3.4
