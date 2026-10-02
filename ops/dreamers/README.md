@@ -92,6 +92,11 @@ Spec amendment recorded as **FIND-NOTHINK-TEMPLATE**.
 
 ## The gate
 
+Each turn is anchored to one topic from `topics.md`, chosen by the clock in `topic.mjs`
+(`slot = floor(now / 450 s)`, `topics[slot % 12]`) — stateless, so both Dreamers in a slot
+share a topic and a restart needs nothing persisted. The topic goes into the prompt and is
+never logged.
+
 `gate.mjs` is pure — no I/O — so the tests need nothing running. Order is fixed and the
 first failure wins: think remnants → prefix strip (strip, never reject) → `SKIP` exact →
 length → prompt leak → register tokens/promises/brands → money → meta → repeat.

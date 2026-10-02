@@ -21,6 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gate } from './gate.mjs';
+import { currentSlot, parseTopics, pickTopic } from './topic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.openclaw', 'dreamers');
@@ -41,6 +42,11 @@ const OLLAMA_TIMEOUT_MS = 120_000;
 
 // §3.2 / §3.4
 const RECENT_LIMIT = 12;
+// c1c · the PROMPT shows only the last few messages, while RECENT_LIMIT is still what is
+// READ — gate()'s REPEAT check needs the full 12 to catch a line the room saw ten turns
+// ago, but feeding all 12 to the model is what let the Dreamers drift into echoing each
+// other's phrasing instead of saying anything new.
+const PROMPT_HISTORY = 4;
 const HIVE_API = 'https://openthehive.ai/api/honeycombs';
 
 // MEASURED DEVIATION FROM THE SPEC, reported in the ticket rather than absorbed
@@ -153,9 +159,28 @@ async function buildPrompt(speaker, messages) {
   const context = (await readFile(join(HERE, 'context.md'), 'utf8')).trim();
   // Only the speaker's OWN persona is in the prompt (§3.2).
   const system = `${persona}\n\n${context}`;
-  const transcript = messages.map((m) => `${m.name}: ${m.content}`).join('\n');
-  const user = `${transcript}${transcript ? '\n\n' : ''}Now speak as ${speaker}.`;
-  return { system, user, full: `${system}\n${user}` };
+
+  // c1c · the last PROMPT_HISTORY messages, not all RECENT_LIMIT of them.
+  const shown = (messages ?? []).slice(-PROMPT_HISTORY);
+  const transcript = shown.map((m) => `${m.name}: ${m.content}`).join('\n');
+
+  // c1c · one topic per turn, from the clock. A null topic (topics.md missing or empty)
+  // costs the turn its topic line and nothing else.
+  let topic = null;
+  try {
+    topic = pickTopic(currentSlot(), parseTopics(await readFile(join(HERE, 'topics.md'), 'utf8')));
+  } catch {
+    topic = null;
+  }
+
+  const parts = [];
+  if (transcript) parts.push(transcript);
+  if (topic) parts.push(`Topic for this turn: ${topic}. Anchor your reply in it.`);
+  parts.push(`Now speak as ${speaker}.`);
+  const user = parts.join('\n\n');
+
+  // `topic` is deliberately NOT returned. Nothing logs it, and nothing should be able to.
+  return { system, user };
 }
 
 /** §3.3 — the local model. Never a hosted API, under any failure. */
@@ -172,7 +197,7 @@ async function generate(system, user) {
         stream: false,
         think: false,
         keep_alive: '30m',
-        options: { temperature: 0.9, num_predict: 220 },
+        options: { temperature: 0.7, num_predict: 220 },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },

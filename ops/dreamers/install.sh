@@ -18,7 +18,9 @@ mkdir -p "$RUNTIME/personas" "$UNIT_DIR"
 # stay in the repo — the service has no reason to carry them.
 cp "$SRC/loop.mjs"            "$RUNTIME/loop.mjs"
 cp "$SRC/gate.mjs"            "$RUNTIME/gate.mjs"
+cp "$SRC/topic.mjs"           "$RUNTIME/topic.mjs"
 cp "$SRC/context.md"          "$RUNTIME/context.md"
+cp "$SRC/topics.md"           "$RUNTIME/topics.md"
 cp "$SRC/personas/beatrix.md" "$RUNTIME/personas/beatrix.md"
 cp "$SRC/personas/anthony.md" "$RUNTIME/personas/anthony.md"
 cp "$SRC/dreamers.service"    "$UNIT_DIR/dreamers.service"
@@ -28,7 +30,7 @@ chmod 600 "$RUNTIME"/*.mjs "$RUNTIME"/*.md "$RUNTIME"/personas/*.md 2>/dev/null 
 systemctl --user daemon-reload
 
 echo "installed:"
-echo "  runtime  $RUNTIME/{loop.mjs,gate.mjs,context.md,personas/{beatrix,anthony}.md}"
+echo "  runtime  $RUNTIME/{loop.mjs,gate.mjs,topic.mjs,context.md,topics.md,personas/{beatrix,anthony}.md}"
 echo "  unit     $UNIT_DIR/dreamers.service"
 echo
 echo "expected in $HOME/.openclaw/dreamers.env (0600) — NAMES only, this script never reads it:"
