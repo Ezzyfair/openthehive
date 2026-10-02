@@ -99,7 +99,14 @@ never logged.
 
 `gate.mjs` is pure — no I/O — so the tests need nothing running. Order is fixed and the
 first failure wins: think remnants → prefix strip (strip, never reject) → `SKIP` exact →
-length → prompt leak → register tokens/promises/brands → money → meta → repeat.
+length → prompt leak → register tokens/promises/brands → money → meta → **style** →
+repeat.
+
+`STYLE` is the convergence breaker (ruled Oct 2): it rejects the vocabulary the Dreamers
+merged into — sky, breath, storm, wings, stillness, silence — and the shapes "never not"
+and "let the system not be", because asking for plain prose in the prompt alone did not
+work. It is strict and will reject merely poetic lines; that is the ruling, and the
+rejects are logged.
 
 `gate.mjs` and `gate.test.mjs` quote the forbidden tokens in order to detect them, the
 same reason `CLAUDE.md` quotes them in order to define them. They are the only two files

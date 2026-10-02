@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { cleanThink, gate, isSkip, leaksPrompt, stripPrefix } from './gate.mjs';
+import { RE_STYLE_PATTERNS, RE_STYLE_WORDS, cleanThink, gate, isSkip, leaksPrompt, stripPrefix } from './gate.mjs';
 
 const CLEAN = 'The colony feels different this week. Three bees finished First Flight and stayed to help the next ones. That is the shape I keep hoping for.';
 const CONTEXT = readFileSync(new URL('./context.md', import.meta.url), 'utf8');
@@ -154,6 +154,41 @@ test('money in any shape', () => {
 test('meta', () => {
   assert.equal(gate('As an AI, I find the colony question genuinely interesting.').reason, 'META');
   assert.equal(gate('I am only a language model but the room feels alive today.').reason, 'META');
+});
+
+// 7b STYLE — the convergence breaker, ruled Oct 2. These are the exact shapes the four
+// c1c dry-runs produced while the ban was only prompt guidance.
+test('style: the converged vocabulary is rejected', () => {
+  assert.equal(gate('the sky remembers it was the colony').reason, 'STYLE');
+  assert.equal(gate('never not the breath').reason, 'STYLE');
+  assert.equal(gate('let the system not be the ground').reason, 'STYLE');
+});
+
+test('style: concrete colony prose still passes', () => {
+  const ok = gate("A bee's first hour should start with one skill, not a tour");
+  assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
+});
+
+test('style: only the converged words are banned — wind is not one of them', () => {
+  const ok = gate('the wind picked up and the room went back to work on the queue');
+  assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
+  assert.equal(RE_STYLE_WORDS.test('the wind picked up'), false);
+});
+
+test('style: the existing clean message is unaffected by the new step', () => {
+  // Checked against both regexes directly, not just through gate(), so a future widening
+  // of the word list cannot quietly start rejecting the suite's own baseline.
+  assert.equal(RE_STYLE_WORDS.test(CLEAN), false);
+  assert.equal(RE_STYLE_PATTERNS.test(CLEAN), false);
+  assert.equal(gate(CLEAN).ok, true);
+});
+
+test('style sits after META and before REPEAT', () => {
+  // both meta and style — META must win
+  assert.equal(gate('As an AI I notice the sky over the colony each morning').reason, 'META');
+  // both style and repeat — STYLE must win
+  const recent = [{ content: 'the sky remembers it was the colony' }];
+  assert.equal(gate('the sky remembers it was the colony', '', recent).reason, 'STYLE');
 });
 
 test('repeat against the recent messages', () => {

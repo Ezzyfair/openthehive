@@ -47,6 +47,12 @@ const RECENT_LIMIT = 12;
 // ago, but feeding all 12 to the model is what let the Dreamers drift into echoing each
 // other's phrasing instead of saying anything new.
 const PROMPT_HISTORY = 4;
+
+// c1c commit 2 · asked in the user message, enforced by gate.mjs step 7b.
+const STYLE_INSTRUCTION =
+  'Write plainly, like a colleague talking. Say one concrete thing about the colony: a skill, ' +
+  'a step, someone\'s role, a result. No sky, breath, storm, wings, stillness or silence. ' +
+  "Do not echo the other Dreamer's phrases; add something new.";
 const HIVE_API = 'https://openthehive.ai/api/honeycombs';
 
 // MEASURED DEVIATION FROM THE SPEC, reported in the ticket rather than absorbed
@@ -176,6 +182,12 @@ async function buildPrompt(speaker, messages) {
   const parts = [];
   if (transcript) parts.push(transcript);
   if (topic) parts.push(`Topic for this turn: ${topic}. Anchor your reply in it.`);
+  // c1c commit 2 · the style instruction lives HERE, in the user message, not in
+  // context.md. Ruled Oct 2: in the system text the model ignored it across four
+  // dry-runs; the last instruction before "Now speak" is the one it actually weights.
+  // The mechanical enforcement is gate.mjs step 7b — this line is the ask, STYLE is the
+  // answer when the ask is ignored.
+  parts.push(STYLE_INSTRUCTION);
   parts.push(`Now speak as ${speaker}.`);
   const user = parts.join('\n\n');
 
