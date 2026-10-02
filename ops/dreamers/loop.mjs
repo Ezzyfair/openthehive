@@ -251,7 +251,13 @@ async function turn(state) {
     return { speaker, posted: false };
   }
 
-  const verdict = gate(raw, prompt.full, recent.messages);
+  // The leak check gets the SYSTEM text only, not prompt.full.
+  // prompt.full includes the user message, and the user message is the chamber
+  // transcript — so passing it made the room's own prior messages count as "prompt",
+  // and a reply that legitimately picked up eight consecutive words from something the
+  // other Dreamer said was rejected as PROMPT_LEAK. §4.5 exists to stop the persona and
+  // context.md being recited, and those are exactly what `system` holds.
+  const verdict = gate(raw, prompt.system, recent.messages);
 
   if (DRY_RUN) {
     // The one place text reaches stdout, and only because Francis is watching it.

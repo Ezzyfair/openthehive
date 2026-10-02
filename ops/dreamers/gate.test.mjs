@@ -102,6 +102,32 @@ test('fewer than eight words cannot leak', () => {
   assert.equal(leaksPrompt('You live in The Hive', CONTEXT), false);
 });
 
+// DREAMERS-001 c1b. The loop passes gate() the SYSTEM text, not system+user — and the
+// user message is the chamber transcript. Before the change, picking up a phrase from
+// something the other Dreamer just said was rejected as PROMPT_LEAK, which is the
+// opposite of a conversation. §4.5 is about the persona and context.md being recited.
+//
+// Both halves are asserted: it passes against the system text, AND it would have been
+// rejected against system+transcript. The second half is what makes the first mean
+// something — without it the test would pass even if the change had never been made.
+test('an eight-word run from a recent message passes when promptText is the system text', () => {
+  const SYSTEM = `${readFileSync(new URL('./personas/beatrix.md', import.meta.url), 'utf8').trim()}\n\n${CONTEXT.trim()}`;
+  const recent = [{ name: 'ANTHONY', content: 'The onboarding queue felt lighter this morning than it has in weeks.' }];
+  const reply = 'The onboarding queue felt lighter this morning than it has in weeks, and I think that is the first real sign of it working.';
+
+  // the phrase is in the room, not in the system text
+  assert.equal(leaksPrompt(reply, SYSTEM), false);
+  const r = gate(reply, SYSTEM, recent);
+  assert.equal(r.ok, true, `expected pass, got ${r.reason}`);
+  assert.equal(r.text, reply);
+
+  // and the contrast: the old argument made exactly this a PROMPT_LEAK
+  const transcript = recent.map((m) => `${m.name}: ${m.content}`).join('\n');
+  const full = `${SYSTEM}\n${transcript}\n\nNow speak as BEATRIX.`;
+  assert.equal(leaksPrompt(reply, full), true);
+  assert.equal(gate(reply, full, recent).reason, 'PROMPT_LEAK');
+});
+
 test('register token: the 10-level numeral form', () => {
   assert.equal(gate('The 10-level cascade is what drew me in, honestly.').reason, 'REGISTER_TOKEN');
   assert.equal(gate('It runs ten levels deep and that is the whole point of it.').reason, 'REGISTER_TOKEN');
