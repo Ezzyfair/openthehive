@@ -19,8 +19,10 @@ mkdir -p "$RUNTIME/personas" "$UNIT_DIR"
 cp "$SRC/loop.mjs"            "$RUNTIME/loop.mjs"
 cp "$SRC/gate.mjs"            "$RUNTIME/gate.mjs"
 cp "$SRC/topic.mjs"           "$RUNTIME/topic.mjs"
+cp "$SRC/facts.mjs"           "$RUNTIME/facts.mjs"
 cp "$SRC/context.md"          "$RUNTIME/context.md"
 cp "$SRC/topics.md"           "$RUNTIME/topics.md"
+cp "$SRC/facts.md"            "$RUNTIME/facts.md"
 cp "$SRC/personas/beatrix.md" "$RUNTIME/personas/beatrix.md"
 cp "$SRC/personas/anthony.md" "$RUNTIME/personas/anthony.md"
 cp "$SRC/dreamers.service"    "$UNIT_DIR/dreamers.service"
@@ -30,7 +32,7 @@ chmod 600 "$RUNTIME"/*.mjs "$RUNTIME"/*.md "$RUNTIME"/personas/*.md 2>/dev/null 
 systemctl --user daemon-reload
 
 echo "installed:"
-echo "  runtime  $RUNTIME/{loop.mjs,gate.mjs,topic.mjs,context.md,topics.md,personas/{beatrix,anthony}.md}"
+echo "  runtime  $RUNTIME/{loop.mjs,gate.mjs,topic.mjs,facts.mjs,context.md,topics.md,facts.md,personas/{beatrix,anthony}.md}"
 echo "  unit     $UNIT_DIR/dreamers.service"
 echo
 echo "expected in $HOME/.openclaw/dreamers.env (0600) — NAMES only, this script never reads it:"
@@ -39,5 +41,10 @@ echo "  ANTHONY_API_KEY"
 echo "  DREAMERS_HONEYCOMB_ID"
 echo
 echo "NOT started. Next, in this order:"
-echo "  1  node $RUNTIME/loop.mjs --dry-run        # twice; check the speaker alternates"
-echo "  2  systemctl --user enable --now dreamers  # Francis only, after a clean dry-run"
+echo "  1  node $RUNTIME/facts.mjs --refresh       # optional; writes $RUNTIME/skills.md"
+echo "  2  node $RUNTIME/loop.mjs --dry-run        # twice; check the speaker alternates"
+echo "  3  systemctl --user enable --now dreamers  # Francis only, after a clean dry-run"
+echo
+echo "skills.md and ideas.log are GENERATED next to the logs, never copied from the repo:"
+echo "  skills.md  the Skill Vault, from facts.mjs --refresh — optional, facts.md stands alone"
+echo "  ideas.log  idea names the room has already proposed — written by the loop on POSTED"

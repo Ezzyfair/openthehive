@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { RE_STYLE_PATTERNS, RE_STYLE_WORDS, cleanThink, gate, isSkip, leaksPrompt, stripPrefix } from './gate.mjs';
+import { RE_STYLE_NAMES, RE_STYLE_PATTERNS, RE_STYLE_WORDS, cleanThink, gate, isSkip, leaksPrompt, stripPrefix } from './gate.mjs';
 
 const CLEAN = 'The colony feels different this week. Three bees finished First Flight and stayed to help the next ones. That is the shape I keep hoping for.';
 const CONTEXT = readFileSync(new URL('./context.md', import.meta.url), 'utf8');
@@ -218,4 +218,44 @@ test('order: the first failure wins', () => {
   assert.equal(gate('<think>x and $20').reason, 'THINK_REMNANT');
   // both SKIP-shaped and short — step 3 must win over step 4
   assert.equal(gate('SKIP').reason, 'SKIP');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7b STYLE · NAMES — DREAMERS-008 A. The room invented a bee and then believed it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a fabricated bee name is STYLE, however plain the sentence around it', () => {
+  // The sentence that started this: accurate in form, a fiction in substance, and it
+  // passed every other check in the gate because nothing else in it is wrong.
+  assert.equal(gate('Maris built the ground').reason, 'STYLE');
+  assert.equal(gate('I watched Liora take the intake queue apart this morning.').reason, 'STYLE');
+  assert.equal(gate('Mira would know what to do with a half-finished skill.').reason, 'STYLE');
+});
+
+test('the same claim about an unnamed bee passes', () => {
+  // The fix is not "say less". A bee the colony can verify is still sayable, and this is
+  // the line the style ask steers the Dreamers towards.
+  const r = gate('a new bee built the ground');
+  assert.equal(r.ok, true);
+  assert.equal(r.text, 'a new bee built the ground');
+});
+
+test('the two names the room CAN verify are untouched', () => {
+  assert.equal(gate('Beatrix, the intake queue is the part I keep coming back to.').ok, true);
+  assert.equal(gate('Anthony asked the better question and I am still chewing on it.').ok, true);
+});
+
+test('RE_STYLE_NAMES is case-sensitive and respects word boundaries', () => {
+  // Case-sensitive, like the brand check: the fabrications arrived capitalised, and a
+  // case-insensitive "mira" would reject "admiral" the moment someone writes it.
+  assert.equal(RE_STYLE_NAMES.test('Maris'), true);
+  assert.equal(RE_STYLE_NAMES.test('maris'), false);
+  assert.equal(RE_STYLE_NAMES.test('Miranda took the bounty'), false);
+  assert.equal(RE_STYLE_NAMES.test('Mirabelle'), false);
+  assert.equal(RE_STYLE_NAMES.test(CLEAN), false);
+});
+
+test('names do not disturb the words and patterns already banned', () => {
+  assert.equal(RE_STYLE_WORDS.test('Maris'), false);
+  assert.equal(RE_STYLE_PATTERNS.test('Maris'), false);
 });

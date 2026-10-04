@@ -15,19 +15,42 @@
 //   turns.log    ISO | speaker | POSTED <message_id> | SKIP | <reason>
 //   rejects.log  ISO | speaker | reason | first 200 chars of the offending text
 //   state.json   { lastSpeaker, lastTurnAt, turnsToday, rejectsToday }
+//   ideas.log    one named idea per line (DREAMERS-008 C) — names only, never a message
+//
+// AND NOTHING FROM THE PROMPT. The topic, the true material, the ledger line, the arc
+// line and the style ask are never written to any of the four files above; --dry-run may
+// print the mode LABEL and the arc WEEK NUMBER to Francis's terminal and nothing more.
 // ----------------------------------------------------------------------------
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gate } from './gate.mjs';
-import { MODE_LINES, currentSlot, filterShown, parseTopics, pickMode, pickTopic } from './topic.mjs';
+import {
+  IDEAS_SHOWN,
+  MODE_LINES,
+  currentDayIndex,
+  currentSlot,
+  extractIdeas,
+  filterShown,
+  mergeIdeas,
+  parseTopics,
+  pickArc,
+  pickFacts,
+  pickMode,
+  pickTopic,
+} from './topic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.openclaw', 'dreamers');
 const STATE_FILE = join(RUNTIME, 'state.json');
 const TURNS_LOG = join(RUNTIME, 'turns.log');
 const REJECTS_LOG = join(RUNTIME, 'rejects.log');
+// DREAMERS-008 B/C · the two runtime files that are DATA, not a record of what was said.
+// skills.md is written by `facts.mjs --refresh` and is optional; ideas.log is written by
+// this loop and holds idea NAMES only — never a message, never a prompt.
+const SKILLS_FILE = join(RUNTIME, 'skills.md');
+const IDEAS_LOG = join(RUNTIME, 'ideas.log');
 
 const SPEAKERS = ['BEATRIX', 'ANTHONY'];
 
@@ -67,6 +90,13 @@ function otherDreamer(speaker) {
  *   the transcript the model can actually see, and points everything else at the
  *   subjunctive. It is an ask, not a check: nothing mechanical verifies a claim, which
  *   is why it is worded as a permission rather than a prohibition.
+ *
+ *   NAMES (DREAMERS-008 A) — and that permission is exactly what went wrong. The room
+ *   invented a bee called "Maris", the name landed in the transcript, and the assertion
+ *   clause then read it back as something that HAD appeared in the messages above. So
+ *   the ask now closes the loop the clause left open: there is no individual bee to
+ *   name, only "a bee". Beatrix and Anthony are the two names the room can verify.
+ *   gate.mjs RE_STYLE_NAMES is the enforcement for the fabrications already seen.
  */
 function styleInstruction(speaker) {
   const other = otherDreamer(speaker);
@@ -75,7 +105,10 @@ function styleInstruction(speaker) {
     'Let one line show how you feel about them without saying it. One image is welcome. ' +
     'No sky, breath, storm, wings, stillness or silence. ' +
     `Only say ${other} or any bee did or posted something if it appears in the messages above; ` +
-    `otherwise speak of what could be, not what was done. Do not echo ${other}'s phrases.`
+    'otherwise speak of what could be, not what was done. ' +
+    "Do not name any individual bee; say 'a bee' or 'a new bee'. " +
+    'The only names you may use are Beatrix and Anthony. ' +
+    `Do not echo ${other}'s phrases.`
   );
 }
 const HIVE_API = 'https://openthehive.ai/api/honeycombs';
@@ -90,14 +123,28 @@ const HIVE_API = 'https://openthehive.ai/api/honeycombs';
 // a verified fact — and posting still happens by id, exactly as §3.4 requires.
 const READ_TITLE = process.env.DREAMERS_HONEYCOMB_TITLE || 'Dreamers Chamber';
 
-const argv = process.argv.slice(2);
-const ONCE = argv.includes('--once');
-const DRY_RUN = argv.includes('--dry-run');
-
 const USAGE = 'usage: loop.mjs [--once] [--dry-run] [--speaker BEATRIX|ANTHONY]';
 
+// DREAMERS-007 · THE FLAGS ARE NOT READ AT MODULE SCOPE.
+//
+// These three were `const`s initialised from process.argv when the file was evaluated,
+// and the --speaker one was an IIFE that called process.exit(2) on a value it did not
+// like. So `import('./loop.mjs')` in a shell whose argv happened to carry a bad
+// --speaker KILLED THE IMPORTING PROCESS, exit code 2, before the importer ran a line —
+// a test runner, say, dying for a flag that was never meant for it. DREAMERS-006 fixed
+// the half of this where importing RAN the service; this is the half where importing
+// read the command line. Nothing below is read until parseFlags() is called, and it is
+// called only from the isEntryPoint block at the bottom of this file.
+//
+// The defaults are the service's own: no --once, no --dry-run, no override. An imported
+// module therefore holds the same values a plain `systemctl start` would give it, which
+// is the honest default for a flag that was never passed.
+let ONCE = false;
+let DRY_RUN = false;
+let OVERRIDE_SPEAKER = null;
+
 /**
- * --speaker, honoured ONLY with --dry-run.
+ * --speaker is honoured ONLY with --dry-run.
  *
  * It exists because --dry-run deliberately does not persist state, so repeated dry-runs
  * keep answering with the same speaker; this is how Francis sees the other voice without
@@ -106,18 +153,24 @@ const USAGE = 'usage: loop.mjs [--once] [--dry-run] [--speaker BEATRIX|ANTHONY]'
  * alternation §3.1 exists to keep.
  *
  * An unparseable value exits 2 rather than falling back to a default: a typo that
- * silently gave you Beatrix when you asked for Anthony would make the dry-run lie.
+ * silently gave you Beatrix when you asked for Anthony would make the dry-run lie. That
+ * exit is why this function must never run on import.
  */
-const OVERRIDE_SPEAKER = (() => {
+function parseFlags(argv) {
+  ONCE = argv.includes('--once');
+  DRY_RUN = argv.includes('--dry-run');
   const i = argv.indexOf('--speaker');
-  if (i === -1) return null;
+  if (i === -1) {
+    OVERRIDE_SPEAKER = null;
+    return;
+  }
   const raw = (argv[i + 1] ?? '').toUpperCase();
   if (!SPEAKERS.includes(raw)) {
     process.stderr.write(`--speaker must be BEATRIX or ANTHONY\n${USAGE}\n`);
     process.exit(2);
   }
-  return raw;
-})();
+  OVERRIDE_SPEAKER = raw;
+}
 
 const iso = () => new Date().toISOString();
 /** stdout only — the unit appends it to service.log. Never a prompt, never a body. */
@@ -168,6 +221,57 @@ async function readPersona(speaker) {
   return (await readFile(join(HERE, 'personas', `${speaker.toLowerCase()}.md`), 'utf8')).trim();
 }
 
+/** One file to lines, or [] if it is missing. Shared by the facts and the ledger. */
+async function readLines(path) {
+  try {
+    return parseTopics(await readFile(path, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * DREAMERS-008 B — the true material, in two halves on purpose.
+ *
+ * facts.md ships WITH the loop and is canon: a human wrote it, Nikita reviewed it, and
+ * it holds nothing that is not true of the colony today. skills.md is written next to
+ * the logs by `facts.mjs --refresh` from the live /skills page, so the Skill Vault can
+ * change without a commit. The canon half must always be there; the fetched half is
+ * optional, and a machine that has never run a refresh simply has fewer true lines.
+ *
+ * Both are read every turn rather than cached: editing facts.md must change the next
+ * turn, not the next restart.
+ */
+async function readTrueMaterial() {
+  const [canon, skills] = await Promise.all([readLines(join(HERE, 'facts.md')), readLines(SKILLS_FILE)]);
+  return [...canon, ...skills];
+}
+
+/**
+ * DREAMERS-008 C — append the ideas named in a POSTED message to the ledger.
+ *
+ * Called ONLY after a successful post, which is the whole point: an idea the room never
+ * actually saw is not an idea the room has proposed, so a rejected or dry-run message
+ * must leave no trace. Failure is swallowed — a ledger that cannot be written costs the
+ * next prompt its "already proposed" line, and that is not worth losing a turn over.
+ *
+ * NAMES ONLY REACH DISK. extractIdeas returns short capitalised phrases; the message
+ * itself is never written here or anywhere else (§4.5).
+ */
+async function recordIdeas(text) {
+  try {
+    const fresh = extractIdeas(text);
+    if (fresh.length === 0) return 0;
+    const before = await readLines(IDEAS_LOG);
+    const after = mergeIdeas(before, fresh);
+    if (after.length === before.length && after.every((v, i) => v === before[i])) return 0;
+    await writeFile(IDEAS_LOG, after.join('\n') + '\n', { mode: 0o600 });
+    return after.length - before.length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
  * §3.2 — the last RECENT_LIMIT approved messages, via the API. Never a DB key.
  * Returns { id, messages } so the caller can verify the room it actually read.
@@ -212,21 +316,57 @@ async function buildPrompt(speaker, messages) {
   // one slot. Derived from the same clock as the topic, so it needs no state either.
   const mode = pickMode(slot, speaker);
 
-  // §3.2 order (DREAMERS-005): transcript · topic · mode · style · now speak.
-  // The style and "Now speak" lines stay last because the final instructions are the
-  // ones the model actually weights — the c1c lesson.
+  // DREAMERS-008 B · four true lines, rotating by the same slot. A failed read costs the
+  // turn its true material and nothing else — the same shrug as a missing topics.md.
+  let facts = [];
+  try {
+    facts = pickFacts(slot, await readTrueMaterial(), 4);
+  } catch {
+    facts = [];
+  }
+
+  // DREAMERS-008 C · what the room has already proposed. Shown so the model can avoid
+  // it, never enforced: re-proposing is a dull turn, not a violation.
+  const ideas = await readLines(IDEAS_LOG);
+
+  // DREAMERS-008 D · the arc. One step a week, both speakers in step.
+  const arc = pickArc(currentDayIndex());
+
+  // §3.2 order, as DREAMERS-008 sets it:
+  //   transcript · topic · true material · ideas already proposed · mode · arc · style ·
+  //   now speak.
+  //
+  // The true material sits straight under the topic because it is what the topic is to be
+  // answered WITH, and the ledger sits under that because it is a constraint on the same
+  // material. The arc goes between the mode and the style ask: the mode is the job, the
+  // arc is who the Dreamer is to the other one while doing it, and the style ask — which
+  // carries the no-names rule — stays last with "Now speak", because the final
+  // instructions are the ones the model actually weights. That is the c1c lesson and the
+  // reason the no-names clause was put in the style ask rather than in context.md.
   const parts = [];
   if (transcript) parts.push(transcript);
   if (topic) parts.push(`Topic for this turn: ${topic}.`);
+  if (facts.length) {
+    parts.push('True material you may draw on: \n' + facts.map((f) => `- ${f}`).join('\n'));
+  }
+  if (ideas.length) {
+    parts.push(
+      'Ideas already proposed in this room; do not re-propose or rename them: ' +
+        ideas.slice(-IDEAS_SHOWN).join(', '),
+    );
+  }
   if (MODE_LINES[mode]) parts.push(MODE_LINES[mode]);
+  parts.push(arc.line);
   parts.push(styleInstruction(speaker));
   parts.push(`Now speak as ${speaker}.`);
   const user = parts.join('\n\n');
 
-  // `topic` is deliberately NOT returned (nothing uses it after this function). `mode` is
-  // returned only as a one-word label for the --dry-run line, which prints to Francis's
-  // terminal and never to disk. Neither value ever reaches a log file.
-  return { system, user, mode };
+  // `topic`, `facts`, `ideas` and the arc LINE are deliberately NOT returned — nothing
+  // uses them after this function, and returning them is how text ends up in a log by
+  // accident. `mode` comes back as a one-word label and the arc as a WEEK NUMBER, both
+  // only for the --dry-run line that prints to Francis's terminal. Neither ever reaches
+  // a log file.
+  return { system, user, mode, arcWeek: arc.week };
 }
 
 /** §3.3 — the local model. Never a hosted API, under any failure. */
@@ -332,9 +472,13 @@ async function turn(state) {
 
   if (DRY_RUN) {
     // The one place text reaches stdout, and only because Francis is watching it.
-    // The mode LABEL only — never the mode line, never the topic text. This is the
-    // dry-run's terminal output, not a log, and the proof asks which mode was drawn.
-    say(`DRY-RUN speaker=${speaker} mode=${prompt.mode ?? 'none'}`);
+    // The mode LABEL and the arc WEEK NUMBER only — never the mode line, never the topic,
+    // never the true material, the ledger or the arc line itself. This is the dry-run's
+    // terminal output, not a log, and the proof asks which mode and which week were drawn.
+    //
+    // A dry-run also records NO ideas: it returns before the post, and the ledger is only
+    // written for a message the room actually saw.
+    say(`DRY-RUN speaker=${speaker} mode=${prompt.mode ?? 'none'} arc=week${prompt.arcWeek}`);
     say(`DRY-RUN verdict=${verdict.ok ? 'PASS' : verdict.reason}`);
     say(`DRY-RUN text=${verdict.ok ? verdict.text : '(no text — rejected)'}`);
     return { speaker, posted: false, verdict };
@@ -353,6 +497,13 @@ async function turn(state) {
   try {
     const { status, messageId } = await post(speaker, verdict.text);
     await logTurn(speaker, status === 200 ? `POSTED ${messageId}` : `POST_HTTP_${status}`);
+    // DREAMERS-008 C · on POSTED only, and after the turn is logged: the ledger is a
+    // convenience for the next prompt, so it must never be able to cost us a turns.log
+    // line. The count goes to stdout, never the names.
+    if (status === 200) {
+      const added = await recordIdeas(verdict.text);
+      if (added) say(`ideas recorded=${added}`);
+    }
     say(`posted speaker=${speaker} status=${status}`);
     return { speaker, posted: status === 200, verdict };
   } catch (e) {
@@ -412,9 +563,16 @@ async function main() {
 // The guard is the standard one: compare this module's URL to argv[1] resolved as a file
 // URL. `node ops/dreamers/loop.mjs --dry-run` still matches and still runs; every import
 // path — a test, another module, a REPL — now does nothing but define functions.
+//
+// DREAMERS-007 moved the FLAG PARSING in here too. The guard alone stopped the import
+// from running the service, but the module still read process.argv on evaluation and
+// could exit(2) on a flag it disliked — so an import was inert only as long as the
+// importing process had a tidy command line.
 const isEntryPoint = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
 
 if (isEntryPoint) {
+  // DREAMERS-007 · the one place the command line is read.
+  parseFlags(process.argv.slice(2));
   main().catch(async (e) => {
     // Last resort. The message only, never a body.
     say(`FATAL ${e?.message ?? e}`);

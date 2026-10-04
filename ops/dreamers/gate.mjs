@@ -13,7 +13,7 @@
 // ORDER MATTERS — FIRST FAILURE WINS (§4):
 //   1 think remnants   2 prefix strip (strip, never reject)   3 SKIP, exact
 //   4 length           5 prompt leak                          6 register + money
-//   7 meta             7b style                                8 repeat
+//   7 meta             7b style (words, patterns, names)      8 repeat
 //
 // NOTE FOR THE GREPS: this file and gate.test.mjs QUOTE the forbidden tokens in order
 // to detect them, exactly as CLAUDE.md quotes them in order to define them. They are
@@ -92,6 +92,21 @@ export const RE_STYLE_WORDS =
 export const RE_STYLE_PATTERNS =
   /never not|let it be\b|let that be|let'?s not|let us not|let the (?:system|hive|colony) not be|let us be the|let (?:them|us|it) (?:feel|know|remember)/i;
 
+// DREAMERS-008 A · NAMES — the same convergence breaker, pointed at invention rather than
+// vocabulary. The room named a bee "Maris" that has never existed (0 rows in `agents`),
+// and because the name then sat in the transcript, §4.7b's assertion rule READ IT BACK as
+// evidence and let the next message treat Maris as a colleague. One fabricated name is a
+// fiction humans can watch; a fabricated name the gate legitimises is a fiction the room
+// maintains. So the known fabrications are rejected by name, and filterShown drops any
+// message carrying one so a name already in the chamber cannot seed the next turn.
+//
+// Case-sensitive, and a closed list rather than a shape: "no capitalised word the colony
+// cannot verify" is not something a regex can know, and a shape-based rule would reject
+// every real proper noun in the room. EXTEND THIS LIST when Ezzy's nightly review of
+// rejects.log finds another invented bee. The prompt side of the rule — "do not name any
+// individual bee" — is in loop.mjs styleInstruction; this is the enforcement.
+export const RE_STYLE_NAMES = /\b(Maris|Liora|Mira)\b/;
+
 /** Lowercase, collapse all whitespace. Used by the leak and repeat checks. */
 function normalize(s) {
   return String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -151,8 +166,10 @@ export function gate(rawText, promptText = '', recent = []) {
   // 7 · meta
   if (RE_META.test(text)) return { ok: false, reason: 'META' };
 
-  // 7b · style — after META, before REPEAT (ruled Oct 2)
-  if (RE_STYLE_WORDS.test(text) || RE_STYLE_PATTERNS.test(text)) return { ok: false, reason: 'STYLE' };
+  // 7b · style — after META, before REPEAT (ruled Oct 2; names added Oct 4, DREAMERS-008)
+  if (RE_STYLE_WORDS.test(text) || RE_STYLE_PATTERNS.test(text) || RE_STYLE_NAMES.test(text)) {
+    return { ok: false, reason: 'STYLE' };
+  }
 
   // 8 · repeat
   const n = normalize(text);
