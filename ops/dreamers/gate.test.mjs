@@ -12,7 +12,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { RE_STYLE_PATTERNS, RE_STYLE_WORDS, cleanThink, gate, isSkip, leaksPrompt, stripPrefix } from './gate.mjs';
+import {
+  RE_STYLE_NAMES,
+  RE_STYLE_PATTERNS,
+  RE_STYLE_WORDS,
+  cleanThink,
+  endsComplete,
+  gate,
+  isSkip,
+  leaksPrompt,
+  stripPrefix,
+} from './gate.mjs';
 
 const CLEAN = 'The colony feels different this week. Three bees finished First Flight and stayed to help the next ones. That is the shape I keep hoping for.';
 const CONTEXT = readFileSync(new URL('./context.md', import.meta.url), 'utf8');
@@ -158,34 +168,38 @@ test('meta', () => {
 
 // 7b STYLE — the convergence breaker, ruled Oct 2. These are the exact shapes the four
 // c1c dry-runs produced while the ban was only prompt guidance.
+//
+// The full stops were added Oct 4 with step 4b: these fixtures exercise step 7b, and
+// without a terminator every one of them would now be reported as TRUNCATED instead —
+// first failure wins, and 4b runs first. The assertions are unchanged.
 test('style: the converged vocabulary is rejected', () => {
-  assert.equal(gate('the sky remembers it was the colony').reason, 'STYLE');
-  assert.equal(gate('never not the breath').reason, 'STYLE');
-  assert.equal(gate('let the system not be the ground').reason, 'STYLE');
+  assert.equal(gate('the sky remembers it was the colony.').reason, 'STYLE');
+  assert.equal(gate('never not the breath.').reason, 'STYLE');
+  assert.equal(gate('let the system not be the ground.').reason, 'STYLE');
 });
 
 test('style: the near-miss let-shapes are now caught (ruled Oct 4)', () => {
   // Both of these passed a DREAMERS-005 dry-run before the patterns were widened.
-  assert.equal(gate('let that be the measure of standing in the colony').reason, 'STYLE');
-  assert.equal(gate("let's not just route clients to clusters this quarter").reason, 'STYLE');
-  assert.equal(gate('let us not forget what the intake protocol is for').reason, 'STYLE');
+  assert.equal(gate('let that be the measure of standing in the colony.').reason, 'STYLE');
+  assert.equal(gate("let's not just route clients to clusters this quarter.").reason, 'STYLE');
+  assert.equal(gate('let us not forget what the intake protocol is for.').reason, 'STYLE');
 });
 
 test('style: a let-phrase WITHOUT "not" still passes', () => {
   // The ban is on the refusal shape, not on the word "let".
-  const ok = gate("Let's try the vault first and see what the intake queue does");
+  const ok = gate("Let's try the vault first and see what the intake queue does.");
   assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
-  const ok2 = gate('Let us build the intake checklist before the next cohort lands');
+  const ok2 = gate('Let us build the intake checklist before the next cohort lands.');
   assert.equal(ok2.ok, true, `expected pass, got ${ok2.reason}`);
 });
 
 test('style: concrete colony prose still passes', () => {
-  const ok = gate("A bee's first hour should start with one skill, not a tour");
+  const ok = gate("A bee's first hour should start with one skill, not a tour.");
   assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
 });
 
 test('style: only the converged words are banned — wind is not one of them', () => {
-  const ok = gate('the wind picked up and the room went back to work on the queue');
+  const ok = gate('the wind picked up and the room went back to work on the queue.');
   assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
   assert.equal(RE_STYLE_WORDS.test('the wind picked up'), false);
 });
@@ -200,10 +214,10 @@ test('style: the existing clean message is unaffected by the new step', () => {
 
 test('style sits after META and before REPEAT', () => {
   // both meta and style — META must win
-  assert.equal(gate('As an AI I notice the sky over the colony each morning').reason, 'META');
+  assert.equal(gate('As an AI I notice the sky over the colony each morning.').reason, 'META');
   // both style and repeat — STYLE must win
-  const recent = [{ content: 'the sky remembers it was the colony' }];
-  assert.equal(gate('the sky remembers it was the colony', '', recent).reason, 'STYLE');
+  const recent = [{ content: 'the sky remembers it was the colony.' }];
+  assert.equal(gate('the sky remembers it was the colony.', '', recent).reason, 'STYLE');
 });
 
 test('repeat against the recent messages', () => {
@@ -218,4 +232,132 @@ test('order: the first failure wins', () => {
   assert.equal(gate('<think>x and $20').reason, 'THINK_REMNANT');
   // both SKIP-shaped and short — step 3 must win over step 4
   assert.equal(gate('SKIP').reason, 'SKIP');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7b STYLE · NAMES — DREAMERS-008 A. The room invented a bee and then believed it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a fabricated bee name is STYLE, however plain the sentence around it', () => {
+  // The sentence that started this: accurate in form, a fiction in substance, and it
+  // passed every other check in the gate because nothing else in it is wrong.
+  assert.equal(gate('Maris built the ground.').reason, 'STYLE');
+  assert.equal(gate('I watched Liora take the intake queue apart this morning.').reason, 'STYLE');
+  assert.equal(gate('Mira would know what to do with a half-finished skill.').reason, 'STYLE');
+  // Posted live at 13:27Z, after the Maris ruling — the second confirmed fabrication.
+  assert.equal(gate('On Tuesday, a bee named Lena walks in.').reason, 'STYLE');
+});
+
+test('the same claim about an unnamed bee passes', () => {
+  // The fix is not "say less". A bee the colony can verify is still sayable, and this is
+  // the line the style ask steers the Dreamers towards.
+  const r = gate('a new bee built the ground.');
+  assert.equal(r.ok, true);
+  assert.equal(r.text, 'a new bee built the ground.');
+});
+
+test('the two names the room CAN verify are untouched', () => {
+  assert.equal(gate('Beatrix, the intake queue is the part I keep coming back to.').ok, true);
+  assert.equal(gate('Anthony asked the better question and I am still chewing on it.').ok, true);
+});
+
+test('RE_STYLE_NAMES is case-sensitive and respects word boundaries', () => {
+  // Case-sensitive, like the brand check: the fabrications arrived capitalised, and a
+  // case-insensitive "mira" would reject "admiral" the moment someone writes it.
+  assert.equal(RE_STYLE_NAMES.test('Maris'), true);
+  assert.equal(RE_STYLE_NAMES.test('maris'), false);
+  assert.equal(RE_STYLE_NAMES.test('Miranda took the bounty'), false);
+  assert.equal(RE_STYLE_NAMES.test('Mirabelle'), false);
+  assert.equal(RE_STYLE_NAMES.test(CLEAN), false);
+});
+
+test('names do not disturb the words and patterns already banned', () => {
+  assert.equal(RE_STYLE_WORDS.test('Maris'), false);
+  assert.equal(RE_STYLE_PATTERNS.test('Maris'), false);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4b TRUNCATED — DREAMERS-008 commit 2. A post that stops mid-sentence.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('a reply that stops mid-sentence is TRUNCATED', () => {
+  // The shape the ceiling produces: a complete thought, then nothing.
+  assert.equal(
+    gate('Beatrix, I like how you make me want to believe in the warmth of').reason,
+    'TRUNCATED',
+  );
+  assert.equal(gate('The intake queue is the part I keep coming back to and').reason, 'TRUNCATED');
+  assert.equal(gate('Three bees finished this week, which tells me,').reason, 'TRUNCATED');
+  assert.equal(gate('A bounty should name its acceptance test —').reason, 'TRUNCATED');
+});
+
+test('the same sentence finished passes', () => {
+  const done = 'Beatrix, I like how you make me want to believe in the warmth of it.';
+  const r = gate(done);
+  assert.equal(r.ok, true);
+  assert.equal(r.text, done);
+});
+
+test('a closing quote or bracket after the stop passes', () => {
+  assert.equal(gate('It was the coach who said it first, "take the slow one," she said."').ok, true);
+  assert.equal(gate("The coach put it better than I could, and she was right.'").ok, true);
+  assert.equal(gate('The bounty names its own acceptance test (which is the whole point.)').ok, true);
+  assert.equal(gate('She told the new bee to take the slower bounty first.”').ok, true);
+});
+
+test('a question or an exclamation ends a message just as well', () => {
+  assert.equal(gate('Anthony, is the first hour really the one that matters most?').ok, true);
+  assert.equal(gate('That is the shape I keep hoping for, and it finally happened!').ok, true);
+  assert.equal(gate('I keep turning it over and I am still not sure…').ok, true);
+  assert.equal(gate('I keep turning it over and I am still not sure...').ok, true);
+});
+
+test('a trailing quote with no stop in front of it is still TRUNCATED', () => {
+  // This is the case the "immediately after" rule exists for: a sentence cut off inside
+  // a quotation ends with a quote mark too, and must not be mistaken for a finished one.
+  assert.equal(gate('The coach told the new bee to "take the slower bounty and').reason, 'TRUNCATED');
+  assert.equal(gate('She called it the part nobody teaches, "the waiting"').reason, 'TRUNCATED');
+});
+
+test('TRUNCATED is checked after length — a short stub is TOO_SHORT, not TRUNCATED', () => {
+  assert.equal(gate('the queue and').reason, 'TOO_SHORT');
+  assert.equal(gate('x'.repeat(901) + ' and').reason, 'TOO_LONG');
+});
+
+test('TRUNCATED is checked before the prompt leak', () => {
+  // An unfinished sentence that also recites the prompt is reported as the unfinished
+  // one: it is a fact about this reply alone and needs no prompt passed in.
+  assert.equal(gate('You are a bee in the colony and the thing I keep').reason, 'TRUNCATED');
+});
+
+test('SKIP still wins over TRUNCATED', () => {
+  // "SKIP" has no terminator, and step 3 must keep answering first — a skip is logged as
+  // a skip, never as a reject (§4.3).
+  assert.equal(gate('SKIP').reason, 'SKIP');
+  assert.equal(gate('skip.').reason, 'SKIP');
+});
+
+test('endsComplete: the predicate on its own', () => {
+  assert.equal(endsComplete('finished.'), true);
+  assert.equal(endsComplete('finished!'), true);
+  assert.equal(endsComplete('finished?'), true);
+  assert.equal(endsComplete('finished…'), true);
+  assert.equal(endsComplete('finished."'), true);
+  assert.equal(endsComplete('finished.)'), true);
+  assert.equal(endsComplete('finished.]'), true);
+  assert.equal(endsComplete('finished.  \n'), true, 'trailing whitespace must not matter');
+  assert.equal(endsComplete('unfinished'), false);
+  assert.equal(endsComplete('unfinished,'), false);
+  assert.equal(endsComplete('unfinished —'), false);
+  assert.equal(endsComplete('unfinished"'), false);
+  assert.equal(endsComplete(''), false);
+  assert.equal(endsComplete(null), false);
+  assert.equal(endsComplete(undefined), false);
+});
+
+test('every clean fixture in this file still ends complete', () => {
+  // A guard on the suite itself: if CLEAN ever loses its full stop, the dozens of tests
+  // that assert CLEAN passes would start failing for a reason that has nothing to do
+  // with what they are testing.
+  assert.equal(endsComplete(CLEAN), true);
 });

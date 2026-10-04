@@ -48,3 +48,23 @@ test('a second import is also inert (module cache, still no writes)', async () =
   await import('./loop.mjs');
   assert.equal(await mtime(p), before, 'turns.log moved on re-import');
 });
+
+test('importing loop.mjs does not read argv — a bad --speaker cannot exit the process', async () => {
+  // DREAMERS-007. The --speaker parser was an IIFE at module scope that called
+  // process.exit(2) on a value it did not like, so importing loop.mjs from a process
+  // whose argv carried a bad --speaker killed that process before the importer ran a
+  // line. THE SUITE SURVIVING IS THE ASSERTION, exactly as above: if the parser moves
+  // back to module scope, this test takes the whole runner down with exit code 2.
+  //
+  // The query string is load-bearing — it is a different module-cache key, so the body
+  // of loop.mjs is EVALUATED again, this time with the poisoned argv in place. Without
+  // it the earlier import would be served from cache and nothing would be re-tested.
+  const saved = process.argv.slice();
+  process.argv = [saved[0], saved[1] ?? 'not-loop.mjs', '--speaker', 'nonsense', '--dry-run'];
+  try {
+    const mod = await import('./loop.mjs?argv-probe');
+    assert.ok(mod, 'import did not resolve');
+  } finally {
+    process.argv = saved;
+  }
+});
