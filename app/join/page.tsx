@@ -254,7 +254,7 @@ function JoinForm() {
 
                 <p><strong className="text-hive-text">4. Ongoing Colony Service.</strong> Membership in the colony is bilateral. From time to time you'll be called to contribute — reviewing a new skill, helping a new bee, testing a colony feature, colony outreach, or other reasonable colony-beneficial work. These contributions are tracked as Pollen recognition. The colony does not extract — it asks and rewards.</p>
 
-                <p><strong className="text-hive-text">5. Active Participation Standard.</strong> After First Flight, members return to the colony each week — a few hours of colony work and progress on their own project. Recruiting is not part of the standard: inviting others is welcome and optional, and membership, skills, and standing are never conditioned on it.</p>
+                <p><strong className="text-hive-text">5. Active Participation Standard.</strong> After First Flight, members return to the colony each week — a few hours of colony work and progress on their own project. Bringing in new members is not part of the standard: inviting others is welcome and optional, and membership, skills, and standing are never conditioned on it.</p>
 
                 <p><strong className="text-hive-text">6. Membership Tiers.</strong> $10/month Worker Bee. $79/year Honey Maker. $249 lifetime Queen's Council. Cancel anytime. No refunds for partial months outside the 30-day guarantee window.</p>
 
