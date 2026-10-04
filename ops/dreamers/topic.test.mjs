@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SLOT_MS, currentSlot, parseTopics, pickTopic } from './topic.mjs';
+import { MODES, MODE_LINES, SLOT_MS, currentSlot, filterShown, parseTopics, pickMode, pickTopic } from './topic.mjs';
 
 // Read the real file — a hand-copied list in a test is a list that rots.
 const TOPICS = parseTopics(readFileSync(new URL('./topics.md', import.meta.url), 'utf8'));
@@ -75,4 +75,112 @@ test('the whole list is reachable — no topic is unreachable by any slot', () =
   const seen = new Set();
   for (let s = 0; s < TOPICS.length; s++) seen.add(pickTopic(s, TOPICS));
   assert.equal(seen.size, TOPICS.length);
+});
+
+// ── MODES · DREAMERS-005 ────────────────────────────────────────────────────
+
+test('modes: the three jobs, with a line for each', () => {
+  assert.deepEqual(MODES, ['propose', 'challenge', 'ask']);
+  for (const m of MODES) {
+    assert.equal(typeof MODE_LINES[m], 'string');
+    assert.ok(MODE_LINES[m].length > 40, `mode line too thin to steer anything: ${m}`);
+  }
+  assert.deepEqual(Object.keys(MODE_LINES).sort(), [...MODES].sort());
+});
+
+test('modes: pickMode cycles all three in order', () => {
+  assert.equal(pickMode(0, 'BEATRIX'), 'propose');
+  assert.equal(pickMode(1, 'BEATRIX'), 'challenge');
+  assert.equal(pickMode(2, 'BEATRIX'), 'ask');
+  assert.equal(pickMode(3, 'BEATRIX'), 'propose');
+});
+
+test('modes: BEATRIX and ANTHONY differ in EVERY slot', () => {
+  // the whole point of the offset — two memos on one subject is what c1c produced
+  for (let slot = 0; slot < 60; slot++) {
+    const b = pickMode(slot, 'BEATRIX');
+    const a = pickMode(slot, 'ANTHONY');
+    assert.notEqual(a, b, `slot ${slot}: both drew ${b}`);
+  }
+});
+
+test('modes: both speakers still reach all three modes across slots', () => {
+  for (const who of ['BEATRIX', 'ANTHONY']) {
+    const seen = new Set([0, 1, 2].map((s) => pickMode(s, who)));
+    assert.equal(seen.size, 3, `${who} cannot reach all three modes`);
+  }
+});
+
+test('modes: an unknown speaker is treated as BEATRIX', () => {
+  for (const who of ['TESSICA', '', null, undefined, 'anthony-ish']) {
+    assert.equal(pickMode(5, who), pickMode(5, 'BEATRIX'), `speaker: ${String(who)}`);
+  }
+  // and the real name is case-insensitive, so 'Anthony' is not silently Beatrix
+  assert.equal(pickMode(5, 'anthony'), pickMode(5, 'ANTHONY'));
+});
+
+test('modes: a negative slot still yields a valid mode', () => {
+  for (const slot of [-1, -2, -3, -7]) {
+    assert.ok(MODES.includes(pickMode(slot, 'BEATRIX')), `slot ${slot}`);
+    assert.ok(MODES.includes(pickMode(slot, 'ANTHONY')), `slot ${slot}`);
+  }
+});
+
+// ── filterShown · DREAMERS-005 c2 ───────────────────────────────────────────
+// Why it lives here and not in loop.mjs: importing loop.mjs executes it — main() runs at
+// the bottom of that module — so a test that imported it would start the service, call
+// Ollama and attempt a post. Measured, not assumed.
+
+const MSGS = [
+  { name: 'BEATRIX', content: 'clean one — the Skill Vault needs an intake checklist' },
+  { name: 'ANTHONY', content: 'If the Hive is the sky that holds no edge, then the path walks itself' },
+  { name: 'BEATRIX', content: 'clean two — Maris trained the volunteers this morning' },
+  { name: 'ANTHONY', content: "let's not just route clients to clusters" },
+  { name: 'BEATRIX', content: 'clean three — bounties should name their acceptance test' },
+];
+
+test('filterShown: banned messages are removed', () => {
+  const out = filterShown(MSGS, 10);
+  assert.equal(out.length, 3);
+  assert.ok(!out.some((m) => /sky/i.test(m.content)), 'a banned-word message survived');
+  assert.ok(!out.some((m) => /let's not/i.test(m.content)), 'a banned-pattern message survived');
+});
+
+test('filterShown: order is preserved, oldest first', () => {
+  const out = filterShown(MSGS, 10).map((m) => m.content.slice(0, 9));
+  assert.deepEqual(out, ['clean one', 'clean two', 'clean thr']);
+});
+
+test('filterShown: returns the LAST n of the clean ones', () => {
+  assert.deepEqual(filterShown(MSGS, 2).map((m) => m.content.slice(0, 9)), ['clean two', 'clean thr']);
+  assert.deepEqual(filterShown(MSGS, 1).map((m) => m.content.slice(0, 9)), ['clean thr']);
+});
+
+test('filterShown: filters BEFORE slicing — a banned tail does not shrink the window', () => {
+  // The two newest are banned. Slicing first would yield nothing; filtering first keeps
+  // the two newest CLEAN messages, which is the point.
+  const tailBanned = [
+    { content: 'clean A — the vault' },
+    { content: 'clean B — the queue' },
+    { content: 'the wings remember' },
+    { content: 'let that be the measure' },
+  ];
+  assert.deepEqual(filterShown(tailBanned, 2).map((m) => m.content.slice(0, 7)), ['clean A', 'clean B']);
+});
+
+test('filterShown: empty in, empty out — and no throw on junk', () => {
+  assert.deepEqual(filterShown([], 4), []);
+  assert.deepEqual(filterShown(null, 4), []);
+  assert.deepEqual(filterShown(undefined, 4), []);
+  assert.deepEqual(filterShown(MSGS, 0), []);
+  assert.deepEqual(filterShown(MSGS, -3), []);
+  assert.deepEqual(filterShown([{}, { content: null }], 4), [{}, { content: null }]);
+});
+
+test('filterShown: accepts plain strings as well as message objects', () => {
+  assert.deepEqual(filterShown(['clean text here', 'the sky again'], 4), ['clean text here']);
+});
+
+test('filterShown: everything banned yields an empty transcript, not a throw', () => {
+  assert.deepEqual(filterShown([{ content: 'the sky' }, { content: 'never not' }], 4), []);
 });

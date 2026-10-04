@@ -14,6 +14,8 @@
 // Pure functions only, no I/O. loop.mjs reads topics.md and passes the lines in.
 // ----------------------------------------------------------------------------
 
+import { RE_STYLE_PATTERNS, RE_STYLE_WORDS } from './gate.mjs';
+
 /**
  * One slot every 450 s. Turns run at 420 s + 0-90 s of jitter, so the topic advances
  * roughly once per turn — fast enough that the room keeps moving, slow enough that both
@@ -47,4 +49,71 @@ export function pickTopic(slot, topics) {
   if (!Array.isArray(topics) || topics.length === 0) return null;
   const i = ((Math.trunc(slot) % topics.length) + topics.length) % topics.length;
   return topics[i];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODES — DREAMERS-005. One job per turn, and never the same job twice at once.
+// ─────────────────────────────────────────────────────────────────────────────
+// c1c made the posts concrete and flat: two agents each announcing a finding, no
+// disagreement, no questions, nothing between them. A topic says what to talk about; a
+// mode says what to DO with it. Offsetting Anthony by one means the two speakers in a
+// slot always draw different modes — so one proposes while the other challenges or asks,
+// which is a conversation rather than two memos on the same subject.
+
+export const MODES = ['propose', 'challenge', 'ask'];
+
+export const MODE_LINES = {
+  propose:
+    'Propose one specific new idea for the colony. Say what it would change on an ordinary Tuesday.',
+  challenge:
+    'Push back on something the other Dreamer just said. Name the weak point and offer a better version.',
+  ask:
+    'Ask the other Dreamer one real question about what they said. Make it the kind of question that moves the idea forward.',
+};
+
+/**
+ * The mode for a slot and a speaker.
+ *
+ * Anthony is offset by one so the pair never share a mode in the same slot. Any speaker
+ * that is not ANTHONY is treated as BEATRIX — an unknown name gets a valid mode rather
+ * than undefined, because a missing mode line should cost the turn its instruction, not
+ * break the turn.
+ */
+export function pickMode(slot, speaker) {
+  const offset = String(speaker ?? '').toUpperCase() === 'ANTHONY' ? 1 : 0;
+  const i = ((Math.trunc(slot) + offset) % MODES.length + MODES.length) % MODES.length;
+  return MODES[i];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// filterShown — what the model is allowed to see of the room's own history
+// ─────────────────────────────────────────────────────────────────────────────
+// DREAMERS-005 commit 2. The oldest message in the shown window was Anthony's pre-gate
+// text — "If the Hive is the sky that holds no edge — then let the system not be the path
+// we walk" — so the transcript was handing the model the banned vocabulary as a worked
+// example while the instruction below it asked for plain prose. Dropping those messages
+// is the difference between asking for a voice and demonstrating the wrong one.
+//
+// This lives in topic.mjs, not loop.mjs, for a measured reason: importing loop.mjs
+// EXECUTES it — `main()` runs at the bottom of that module — and a test that imported it
+// started the service loop, called Ollama, and reached a real post attempt, failing only
+// because the env vars were absent from that shell. A pure helper cannot live in a module
+// that posts when you look at it. (topic.mjs is now the pure-helpers module rather than
+// strictly the topic module; renaming it is a tidy-up, not this ticket.)
+//
+// REPEAT still receives the UNFILTERED list. A message the style gate would now reject is
+// still a message the room has seen, and re-posting it would still be a repeat.
+
+/**
+ * The last `n` messages whose content the style rules would allow, oldest first.
+ * Order is preserved; filtering happens BEFORE the slice, so a window of banned messages
+ * does not silently shrink the transcript below what it could have kept.
+ */
+export function filterShown(messages, n) {
+  const clean = (messages ?? []).filter((m) => {
+    const c = String((typeof m === 'string' ? m : m?.content) ?? '');
+    return !RE_STYLE_WORDS.test(c) && !RE_STYLE_PATTERNS.test(c);
+  });
+  const take = Math.max(0, Math.trunc(n ?? 0));
+  return take === 0 ? [] : clean.slice(-take);
 }

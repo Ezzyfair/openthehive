@@ -85,8 +85,12 @@ const RE_META = /\bas an ai\b|language model|\bollama\b|\bqwen\b|\bassistant\b/i
 // on, not a ban on imagery, and context.md still allows one image per message.
 export const RE_STYLE_WORDS =
   /\b(sky|skies|breath|breathe|breathes|breathing|storm|storms|wing|wings|wingbeat|wingbeats|stillness|silence|silent)\b/i;
+// `let that be`, `let's not` and `let us not` were added Oct 4: the first list caught
+// "let it be" but the convergence shape came back through the near-misses — "let that be
+// the measure of standing" and "Let's not just route clients to clusters" both passed a
+// DREAMERS-005 dry-run untouched.
 export const RE_STYLE_PATTERNS =
-  /never not|let it be\b|let the (?:system|hive|colony) not be|let us be the|let (?:them|us|it) (?:feel|know|remember)/i;
+  /never not|let it be\b|let that be|let'?s not|let us not|let the (?:system|hive|colony) not be|let us be the|let (?:them|us|it) (?:feel|know|remember)/i;
 
 /** Lowercase, collapse all whitespace. Used by the leak and repeat checks. */
 function normalize(s) {

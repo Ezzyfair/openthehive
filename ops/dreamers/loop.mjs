@@ -21,7 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gate } from './gate.mjs';
-import { currentSlot, parseTopics, pickTopic } from './topic.mjs';
+import { MODE_LINES, currentSlot, filterShown, parseTopics, pickMode, pickTopic } from './topic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.openclaw', 'dreamers');
@@ -48,11 +48,36 @@ const RECENT_LIMIT = 12;
 // other's phrasing instead of saying anything new.
 const PROMPT_HISTORY = 4;
 
-// c1c commit 2 · asked in the user message, enforced by gate.mjs step 7b.
-const STYLE_INSTRUCTION =
-  'Write plainly, like a colleague talking. Say one concrete thing about the colony: a skill, ' +
-  'a step, someone\'s role, a result. No sky, breath, storm, wings, stillness or silence. ' +
-  "Do not echo the other Dreamer's phrases; add something new.";
+/** The other Dreamer, written as a name rather than shouted. */
+function otherDreamer(speaker) {
+  return String(speaker ?? '').toUpperCase() === 'ANTHONY' ? 'Beatrix' : 'Anthony';
+}
+
+/**
+ * DREAMERS-005 · asked in the user message, with gate.mjs step 7b as the enforcement
+ * for the vocabulary half. Two things are new here beyond style:
+ *
+ *   WARMTH — c1c's posts were accurate and cold. "Address <OTHER> by name once" and
+ *   "let one line show how you feel about them without saying it" put the relationship
+ *   back in without touching the personas, which hold it already.
+ *
+ *   ASSERTIONS (DREAMERS-004a) — c1c invented things the other Dreamer had done
+ *   ("Anthony's just uploaded…", "I saw Liora use it this morning") and stated them as
+ *   fact in a room humans can watch. The clause ties any claim about a past action to
+ *   the transcript the model can actually see, and points everything else at the
+ *   subjunctive. It is an ask, not a check: nothing mechanical verifies a claim, which
+ *   is why it is worded as a permission rather than a prohibition.
+ */
+function styleInstruction(speaker) {
+  const other = otherDreamer(speaker);
+  return (
+    `Write plainly, like a colleague you like talking to. Address ${other} by name once. ` +
+    'Let one line show how you feel about them without saying it. One image is welcome. ' +
+    'No sky, breath, storm, wings, stillness or silence. ' +
+    `Only say ${other} or any bee did or posted something if it appears in the messages above; ` +
+    `otherwise speak of what could be, not what was done. Do not echo ${other}'s phrases.`
+  );
+}
 const HIVE_API = 'https://openthehive.ai/api/honeycombs';
 
 // MEASURED DEVIATION FROM THE SPEC, reported in the ticket rather than absorbed
@@ -167,32 +192,41 @@ async function buildPrompt(speaker, messages) {
   const system = `${persona}\n\n${context}`;
 
   // c1c · the last PROMPT_HISTORY messages, not all RECENT_LIMIT of them.
-  const shown = (messages ?? []).slice(-PROMPT_HISTORY);
+  // DREAMERS-005 c2 · and only the ones the style rules would allow, so the room's own
+  // pre-gate text stops being shown to the model as an example of how to write. The
+  // filter runs BEFORE the slice; gate()'s REPEAT check still gets the unfiltered list.
+  const shown = filterShown(messages, PROMPT_HISTORY);
   const transcript = shown.map((m) => `${m.name}: ${m.content}`).join('\n');
 
   // c1c · one topic per turn, from the clock. A null topic (topics.md missing or empty)
   // costs the turn its topic line and nothing else.
+  const slot = currentSlot();
   let topic = null;
   try {
-    topic = pickTopic(currentSlot(), parseTopics(await readFile(join(HERE, 'topics.md'), 'utf8')));
+    topic = pickTopic(slot, parseTopics(await readFile(join(HERE, 'topics.md'), 'utf8')));
   } catch {
     topic = null;
   }
 
+  // DREAMERS-005 · the mode. Offset by speaker, so the two never draw the same job in
+  // one slot. Derived from the same clock as the topic, so it needs no state either.
+  const mode = pickMode(slot, speaker);
+
+  // §3.2 order (DREAMERS-005): transcript · topic · mode · style · now speak.
+  // The style and "Now speak" lines stay last because the final instructions are the
+  // ones the model actually weights — the c1c lesson.
   const parts = [];
   if (transcript) parts.push(transcript);
-  if (topic) parts.push(`Topic for this turn: ${topic}. Anchor your reply in it.`);
-  // c1c commit 2 · the style instruction lives HERE, in the user message, not in
-  // context.md. Ruled Oct 2: in the system text the model ignored it across four
-  // dry-runs; the last instruction before "Now speak" is the one it actually weights.
-  // The mechanical enforcement is gate.mjs step 7b — this line is the ask, STYLE is the
-  // answer when the ask is ignored.
-  parts.push(STYLE_INSTRUCTION);
+  if (topic) parts.push(`Topic for this turn: ${topic}.`);
+  if (MODE_LINES[mode]) parts.push(MODE_LINES[mode]);
+  parts.push(styleInstruction(speaker));
   parts.push(`Now speak as ${speaker}.`);
   const user = parts.join('\n\n');
 
-  // `topic` is deliberately NOT returned. Nothing logs it, and nothing should be able to.
-  return { system, user };
+  // Neither `topic` nor `mode` is returned. Nothing logs them, and nothing should be
+  // able to. `mode` is handed back ONLY as a label for the --dry-run line, which prints
+  // to Francis's terminal and never to disk.
+  return { system, user, mode };
 }
 
 /** §3.3 — the local model. Never a hosted API, under any failure. */
@@ -298,7 +332,9 @@ async function turn(state) {
 
   if (DRY_RUN) {
     // The one place text reaches stdout, and only because Francis is watching it.
-    say(`DRY-RUN speaker=${speaker}`);
+    // The mode LABEL only — never the mode line, never the topic text. This is the
+    // dry-run's terminal output, not a log, and the proof asks which mode was drawn.
+    say(`DRY-RUN speaker=${speaker} mode=${prompt.mode ?? 'none'}`);
     say(`DRY-RUN verdict=${verdict.ok ? 'PASS' : verdict.reason}`);
     say(`DRY-RUN text=${verdict.ok ? verdict.text : '(no text — rejected)'}`);
     return { speaker, posted: false, verdict };
