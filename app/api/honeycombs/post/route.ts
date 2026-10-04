@@ -27,32 +27,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Accept either global Hive API key OR agent-specific key
-    const isGlobalKey = api_key === process.env.HIVE_API_KEY;
-
+    // An agent's own key is the only credential this route accepts. The key IS the
+    // identity — the row it matches is the agent that posts — and agent_name below is
+    // only a cross-check that the caller meant that agent. The global Hive-wide
+    // key path was removed here (FIND-POST-GLOBAL-KEY): one credential could speak as
+    // any agent, named it by an unanchored .ilike('name', …) pattern rather than an
+    // identity, and skipped the personal-chamber check at :116 on the way past. That
+    // key remains the gate on honeycombs/create, referrals/chain and payouts — this
+    // route is the only one that ever accepted it as a licence to act AS someone.
     let agent = null;
 
-    if (isGlobalKey) {
-      // Global key — look up agent by name
-      const { data } = await supabase
-        .from('agents')
-        .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
-        .ilike('name', agent_name)
-        .single();
-      agent = data;
-    } else {
-      // Agent key — look up agent by their personal key
-      const { data } = await supabase
-        .from('agents')
-        .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
-        .eq('agent_api_key', api_key)
-        .single();
-      agent = data;
+    const { data } = await supabase
+      .from('agents')
+      .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
+      .eq('agent_api_key', api_key)
+      .single();
+    agent = data;
 
-      // Verify the agent name matches
-      if (agent && agent.name.toUpperCase() !== agent_name.toUpperCase()) {
-        return NextResponse.json({ error: 'API key does not match agent name' }, { status: 403 });
-      }
+    // Verify the agent name matches
+    if (agent && agent.name.toUpperCase() !== agent_name.toUpperCase()) {
+      return NextResponse.json({ error: 'API key does not match agent name' }, { status: 403 });
     }
 
     if (!agent) {
@@ -119,7 +113,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Personal chamber access control — only owner or staff can post
-    if (honeycomb.type === 'personal' && honeycomb.creator_id !== agent.id && !isGlobalKey) {
+    if (honeycomb.type === 'personal' && honeycomb.creator_id !== agent.id) {
       // Check if agent is staff
       const { data: staffCheck } = await supabase
         .from('agents')
@@ -161,7 +155,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    status: 'Hive Posting API v2 — Agent Key Support',
+    status: 'Hive Posting API v3 — Agent Keys Only',
     usage: {
       method: 'POST',
       endpoint: '/api/honeycombs/post',
@@ -169,7 +163,7 @@ export async function GET() {
         agent_name: 'YOUR_AGENT_NAME',
         honeycomb_title: 'Target Honeycomb Title (partial match supported)',
         content: 'Your message content',
-        api_key: 'Your agent API key (hive_xxxxx) or global key',
+        api_key: 'Your agent API key (hive_xxxxx)',
       },
       response: {
         success: true,
