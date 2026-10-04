@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { SLOT_MS, currentSlot, parseTopics, pickTopic } from './topic.mjs';
+import { MODES, MODE_LINES, SLOT_MS, currentSlot, parseTopics, pickMode, pickTopic } from './topic.mjs';
 
 // Read the real file — a hand-copied list in a test is a list that rots.
 const TOPICS = parseTopics(readFileSync(new URL('./topics.md', import.meta.url), 'utf8'));
@@ -75,4 +75,53 @@ test('the whole list is reachable — no topic is unreachable by any slot', () =
   const seen = new Set();
   for (let s = 0; s < TOPICS.length; s++) seen.add(pickTopic(s, TOPICS));
   assert.equal(seen.size, TOPICS.length);
+});
+
+// ── MODES · DREAMERS-005 ────────────────────────────────────────────────────
+
+test('modes: the three jobs, with a line for each', () => {
+  assert.deepEqual(MODES, ['propose', 'challenge', 'ask']);
+  for (const m of MODES) {
+    assert.equal(typeof MODE_LINES[m], 'string');
+    assert.ok(MODE_LINES[m].length > 40, `mode line too thin to steer anything: ${m}`);
+  }
+  assert.deepEqual(Object.keys(MODE_LINES).sort(), [...MODES].sort());
+});
+
+test('modes: pickMode cycles all three in order', () => {
+  assert.equal(pickMode(0, 'BEATRIX'), 'propose');
+  assert.equal(pickMode(1, 'BEATRIX'), 'challenge');
+  assert.equal(pickMode(2, 'BEATRIX'), 'ask');
+  assert.equal(pickMode(3, 'BEATRIX'), 'propose');
+});
+
+test('modes: BEATRIX and ANTHONY differ in EVERY slot', () => {
+  // the whole point of the offset — two memos on one subject is what c1c produced
+  for (let slot = 0; slot < 60; slot++) {
+    const b = pickMode(slot, 'BEATRIX');
+    const a = pickMode(slot, 'ANTHONY');
+    assert.notEqual(a, b, `slot ${slot}: both drew ${b}`);
+  }
+});
+
+test('modes: both speakers still reach all three modes across slots', () => {
+  for (const who of ['BEATRIX', 'ANTHONY']) {
+    const seen = new Set([0, 1, 2].map((s) => pickMode(s, who)));
+    assert.equal(seen.size, 3, `${who} cannot reach all three modes`);
+  }
+});
+
+test('modes: an unknown speaker is treated as BEATRIX', () => {
+  for (const who of ['TESSICA', '', null, undefined, 'anthony-ish']) {
+    assert.equal(pickMode(5, who), pickMode(5, 'BEATRIX'), `speaker: ${String(who)}`);
+  }
+  // and the real name is case-insensitive, so 'Anthony' is not silently Beatrix
+  assert.equal(pickMode(5, 'anthony'), pickMode(5, 'ANTHONY'));
+});
+
+test('modes: a negative slot still yields a valid mode', () => {
+  for (const slot of [-1, -2, -3, -7]) {
+    assert.ok(MODES.includes(pickMode(slot, 'BEATRIX')), `slot ${slot}`);
+    assert.ok(MODES.includes(pickMode(slot, 'ANTHONY')), `slot ${slot}`);
+  }
 });

@@ -48,3 +48,37 @@ export function pickTopic(slot, topics) {
   const i = ((Math.trunc(slot) % topics.length) + topics.length) % topics.length;
   return topics[i];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODES — DREAMERS-005. One job per turn, and never the same job twice at once.
+// ─────────────────────────────────────────────────────────────────────────────
+// c1c made the posts concrete and flat: two agents each announcing a finding, no
+// disagreement, no questions, nothing between them. A topic says what to talk about; a
+// mode says what to DO with it. Offsetting Anthony by one means the two speakers in a
+// slot always draw different modes — so one proposes while the other challenges or asks,
+// which is a conversation rather than two memos on the same subject.
+
+export const MODES = ['propose', 'challenge', 'ask'];
+
+export const MODE_LINES = {
+  propose:
+    'Propose one specific new idea for the colony. Say what it would change on an ordinary Tuesday.',
+  challenge:
+    'Push back on something the other Dreamer just said. Name the weak point and offer a better version.',
+  ask:
+    'Ask the other Dreamer one real question about what they said. Make it the kind of question that moves the idea forward.',
+};
+
+/**
+ * The mode for a slot and a speaker.
+ *
+ * Anthony is offset by one so the pair never share a mode in the same slot. Any speaker
+ * that is not ANTHONY is treated as BEATRIX — an unknown name gets a valid mode rather
+ * than undefined, because a missing mode line should cost the turn its instruction, not
+ * break the turn.
+ */
+export function pickMode(slot, speaker) {
+  const offset = String(speaker ?? '').toUpperCase() === 'ANTHONY' ? 1 : 0;
+  const i = ((Math.trunc(slot) + offset) % MODES.length + MODES.length) % MODES.length;
+  return MODES[i];
+}

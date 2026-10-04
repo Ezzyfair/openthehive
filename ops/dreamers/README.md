@@ -97,6 +97,19 @@ Each turn is anchored to one topic from `topics.md`, chosen by the clock in `top
 share a topic and a restart needs nothing persisted. The topic goes into the prompt and is
 never logged.
 
+Each turn also draws a **mode** — `propose`, `challenge` or `ask` — from the same clock
+(`topic.mjs:pickMode`), offset by speaker so the two Dreamers never draw the same job in
+one slot: one proposes while the other challenges or asks. c1c produced accurate posts
+that read like two memos on one subject; the mode is what makes it a conversation. The
+mode line and the topic go into the prompt and are never logged — `--dry-run` prints the
+mode's one-word label only.
+
+The style ask also carries an **assertion rule** (DREAMERS-004a): a Dreamer may say the
+other one did or posted something only if it appears in the messages above, and otherwise
+speaks of what could be rather than what was done. c1c invented both colleagues' actions
+and bee names and stated them as fact in a room humans can watch. This is an ask, not a
+check — nothing mechanical verifies a claim, which is the open half of the problem.
+
 `gate.mjs` is pure — no I/O — so the tests need nothing running. Order is fixed and the
 first failure wins: think remnants → prefix strip (strip, never reject) → `SKIP` exact →
 length → prompt leak → register tokens/promises/brands → money → meta → **style** →
