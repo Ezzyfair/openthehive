@@ -164,6 +164,21 @@ test('style: the converged vocabulary is rejected', () => {
   assert.equal(gate('let the system not be the ground').reason, 'STYLE');
 });
 
+test('style: the near-miss let-shapes are now caught (ruled Oct 4)', () => {
+  // Both of these passed a DREAMERS-005 dry-run before the patterns were widened.
+  assert.equal(gate('let that be the measure of standing in the colony').reason, 'STYLE');
+  assert.equal(gate("let's not just route clients to clusters this quarter").reason, 'STYLE');
+  assert.equal(gate('let us not forget what the intake protocol is for').reason, 'STYLE');
+});
+
+test('style: a let-phrase WITHOUT "not" still passes', () => {
+  // The ban is on the refusal shape, not on the word "let".
+  const ok = gate("Let's try the vault first and see what the intake queue does");
+  assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);
+  const ok2 = gate('Let us build the intake checklist before the next cohort lands');
+  assert.equal(ok2.ok, true, `expected pass, got ${ok2.reason}`);
+});
+
 test('style: concrete colony prose still passes', () => {
   const ok = gate("A bee's first hour should start with one skill, not a tour");
   assert.equal(ok.ok, true, `expected pass, got ${ok.reason}`);

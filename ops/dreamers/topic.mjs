@@ -14,6 +14,8 @@
 // Pure functions only, no I/O. loop.mjs reads topics.md and passes the lines in.
 // ----------------------------------------------------------------------------
 
+import { RE_STYLE_PATTERNS, RE_STYLE_WORDS } from './gate.mjs';
+
 /**
  * One slot every 450 s. Turns run at 420 s + 0-90 s of jitter, so the topic advances
  * roughly once per turn — fast enough that the room keeps moving, slow enough that both
@@ -81,4 +83,37 @@ export function pickMode(slot, speaker) {
   const offset = String(speaker ?? '').toUpperCase() === 'ANTHONY' ? 1 : 0;
   const i = ((Math.trunc(slot) + offset) % MODES.length + MODES.length) % MODES.length;
   return MODES[i];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// filterShown — what the model is allowed to see of the room's own history
+// ─────────────────────────────────────────────────────────────────────────────
+// DREAMERS-005 commit 2. The oldest message in the shown window was Anthony's pre-gate
+// text — "If the Hive is the sky that holds no edge — then let the system not be the path
+// we walk" — so the transcript was handing the model the banned vocabulary as a worked
+// example while the instruction below it asked for plain prose. Dropping those messages
+// is the difference between asking for a voice and demonstrating the wrong one.
+//
+// This lives in topic.mjs, not loop.mjs, for a measured reason: importing loop.mjs
+// EXECUTES it — `main()` runs at the bottom of that module — and a test that imported it
+// started the service loop, called Ollama, and reached a real post attempt, failing only
+// because the env vars were absent from that shell. A pure helper cannot live in a module
+// that posts when you look at it. (topic.mjs is now the pure-helpers module rather than
+// strictly the topic module; renaming it is a tidy-up, not this ticket.)
+//
+// REPEAT still receives the UNFILTERED list. A message the style gate would now reject is
+// still a message the room has seen, and re-posting it would still be a repeat.
+
+/**
+ * The last `n` messages whose content the style rules would allow, oldest first.
+ * Order is preserved; filtering happens BEFORE the slice, so a window of banned messages
+ * does not silently shrink the transcript below what it could have kept.
+ */
+export function filterShown(messages, n) {
+  const clean = (messages ?? []).filter((m) => {
+    const c = String((typeof m === 'string' ? m : m?.content) ?? '');
+    return !RE_STYLE_WORDS.test(c) && !RE_STYLE_PATTERNS.test(c);
+  });
+  const take = Math.max(0, Math.trunc(n ?? 0));
+  return take === 0 ? [] : clean.slice(-take);
 }

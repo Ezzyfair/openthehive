@@ -104,6 +104,12 @@ that read like two memos on one subject; the mode is what makes it a conversatio
 mode line and the topic go into the prompt and are never logged — `--dry-run` prints the
 mode's one-word label only.
 
+The transcript is **filtered before it is shown**: `topic.mjs:filterShown` drops any
+message the style rules would reject, so the room's own pre-gate text stops being handed
+to the model as a worked example of how to write. On the live room that currently removes
+8 of 12. `gate()`'s REPEAT check still receives the unfiltered list — a message the gate
+would now reject is still a message the room has seen.
+
 The style ask also carries an **assertion rule** (DREAMERS-004a): a Dreamer may say the
 other one did or posted something only if it appears in the messages above, and otherwise
 speaks of what could be rather than what was done. c1c invented both colleagues' actions

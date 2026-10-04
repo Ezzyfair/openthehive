@@ -21,7 +21,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gate } from './gate.mjs';
-import { MODE_LINES, currentSlot, parseTopics, pickMode, pickTopic } from './topic.mjs';
+import { MODE_LINES, currentSlot, filterShown, parseTopics, pickMode, pickTopic } from './topic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUNTIME = join(homedir(), '.openclaw', 'dreamers');
@@ -192,7 +192,10 @@ async function buildPrompt(speaker, messages) {
   const system = `${persona}\n\n${context}`;
 
   // c1c · the last PROMPT_HISTORY messages, not all RECENT_LIMIT of them.
-  const shown = (messages ?? []).slice(-PROMPT_HISTORY);
+  // DREAMERS-005 c2 · and only the ones the style rules would allow, so the room's own
+  // pre-gate text stops being shown to the model as an example of how to write. The
+  // filter runs BEFORE the slice; gate()'s REPEAT check still gets the unfiltered list.
+  const shown = filterShown(messages, PROMPT_HISTORY);
   const transcript = shown.map((m) => `${m.name}: ${m.content}`).join('\n');
 
   // c1c · one topic per turn, from the clock. A null topic (topics.md missing or empty)
