@@ -244,6 +244,8 @@ test('a fabricated bee name is STYLE, however plain the sentence around it', () 
   assert.equal(gate('Maris built the ground.').reason, 'STYLE');
   assert.equal(gate('I watched Liora take the intake queue apart this morning.').reason, 'STYLE');
   assert.equal(gate('Mira would know what to do with a half-finished skill.').reason, 'STYLE');
+  // Posted live at 13:27Z, after the Maris ruling — the second confirmed fabrication.
+  assert.equal(gate('On Tuesday, a bee named Lena walks in.').reason, 'STYLE');
 });
 
 test('the same claim about an unnamed bee passes', () => {

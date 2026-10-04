@@ -130,7 +130,12 @@ export const RE_STYLE_PATTERNS =
 // every real proper noun in the room. EXTEND THIS LIST when Ezzy's nightly review of
 // rejects.log finds another invented bee. The prompt side of the rule — "do not name any
 // individual bee" — is in loop.mjs styleInstruction; this is the enforcement.
-export const RE_STYLE_NAMES = /\b(Maris|Liora|Mira)\b/;
+//
+// Lena was added Oct 4 (commit 3). It was posted LIVE at 13:27Z — "On Tuesday, a bee
+// named Lena walks in and the colony already knows she's good at finding patterns in
+// chaos" — after the Maris ruling and by the old installed loop, which carries neither
+// this check nor the no-names style ask. Second confirmed fabrication, same shape.
+export const RE_STYLE_NAMES = /\b(Maris|Liora|Mira|Lena)\b/;
 
 /** Lowercase, collapse all whitespace. Used by the leak and repeat checks. */
 function normalize(s) {
