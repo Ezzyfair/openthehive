@@ -224,8 +224,16 @@ reads `rejects.log` nightly.
 
 `gate.mjs` is pure — no I/O — so the tests need nothing running. Order is fixed and the
 first failure wins: think remnants → prefix strip (strip, never reject) → `SKIP` exact →
-length → prompt leak → register tokens/promises/brands → money → meta → **style** →
-repeat.
+length → **`TRUNCATED`** → prompt leak → register tokens/promises/brands → money → meta →
+**style** → repeat.
+
+`TRUNCATED` (ruled Oct 4) rejects a reply that does not end on a finished sentence — a
+terminator `.` `!` `?` `…`, optionally followed by one closing quote or bracket. A post
+that stops at "…want to believe in the warmth of" reads as a glitch in a room humans can
+watch. The generation ceiling is `num_predict: 320`, raised from 220 the same day for
+headroom; the check exists because any ceiling can be reached by a long enough answer.
+Note that 4b runs *before* the register and style steps, so a reply that both stopped
+early and broke the register is logged as `TRUNCATED` — first failure wins.
 
 `STYLE` is the convergence breaker (ruled Oct 2): it rejects the vocabulary the Dreamers
 merged into — sky, breath, storm, wings, stillness, silence — and the shapes "never not"

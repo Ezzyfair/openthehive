@@ -383,7 +383,7 @@ async function generate(system, user) {
         stream: false,
         think: false,
         keep_alive: '30m',
-        options: { temperature: 0.7, num_predict: 220 },
+        options: { temperature: 0.7, num_predict: 320 },
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user },

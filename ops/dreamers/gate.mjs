@@ -11,9 +11,10 @@
 // reads them nightly. Do not soften them.
 //
 // ORDER MATTERS — FIRST FAILURE WINS (§4):
-//   1 think remnants   2 prefix strip (strip, never reject)   3 SKIP, exact
-//   4 length           5 prompt leak                          6 register + money
-//   7 meta             7b style (words, patterns, names)      8 repeat
+//   1 think remnants     2 prefix strip (strip, never reject)   3 SKIP, exact
+//   4 length             4b TRUNCATED                           5 prompt leak
+//   6 register + money   7 meta                                 7b style (words, patterns, names)
+//   8 repeat
 //
 // NOTE FOR THE GREPS: this file and gate.test.mjs QUOTE the forbidden tokens in order
 // to detect them, exactly as CLAUDE.md quotes them in order to define them. They are
@@ -56,6 +57,30 @@ export function stripPrefix(text) {
 /** §4.3 — SKIP is an EXACT match. A sentence containing "skip" is never a skip. */
 export function isSkip(text) {
   return /^skip\.?$/i.test(String(text ?? '').trim());
+}
+
+// §4.4b TRUNCATED — the 220-token ceiling could stop a reply mid-sentence, and a post
+// that ends "…want to believe in the warmth of" reads as a glitch in a room humans can
+// watch. loop.mjs raises num_predict to 320 for headroom; this is the check that catches
+// the case anyway, because a ceiling can always be reached by a long enough answer.
+//
+// It is a SENTENCE-END check, not a length check: TOO_LONG already handles a reply that
+// ran past MAX_CHARS, and the failure here is a reply that stopped without finishing.
+// Deliberately strict in the same way the rest of the gate is — a message ending in a
+// bare word, a comma, a dash or an unclosed quote is rejected and logged for Ezzy.
+
+/** A terminator, optionally followed by one closing quote or bracket. */
+const RE_SENTENCE_END = /[.!?\u2026]["\u201d\u2019')\]]?$/;
+
+/**
+ * §4.4b — does the text end on a finished sentence?
+ *
+ * The closer must come IMMEDIATELY after a terminator, so `she said."` passes while a
+ * bare `"` does not: a trailing quote with no stop in front of it is exactly what a
+ * sentence cut off inside a quotation looks like.
+ */
+export function endsComplete(text) {
+  return RE_SENTENCE_END.test(String(text ?? '').trim());
 }
 
 /** §4.5 — literal fragments of the prompt that must never be read aloud. */
@@ -152,6 +177,13 @@ export function gate(rawText, promptText = '', recent = []) {
   // 4 · length
   if (text.length < MIN_CHARS) return { ok: false, reason: 'TOO_SHORT' };
   if (text.length > MAX_CHARS) return { ok: false, reason: 'TOO_LONG' };
+
+  // 4b · truncation — after length, before the prompt leak (DREAMERS-008 commit 2).
+  // After length because TOO_SHORT and TOO_LONG are the cheaper, blunter facts about the
+  // same string and should be the reason when they apply; before PROMPT_LEAK because an
+  // unfinished sentence is a fact about this reply alone, and reporting it does not
+  // depend on the prompt being passed in.
+  if (!endsComplete(text)) return { ok: false, reason: 'TRUNCATED' };
 
   // 5 · prompt leak
   if (LEAK_MARKERS.some((m) => text.includes(m))) return { ok: false, reason: 'PROMPT_LEAK' };

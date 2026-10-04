@@ -253,8 +253,14 @@ test('every line of facts.md passes the gate it will be read beside', () => {
   // headers say — and a third copy in this file would be a third place to forget when
   // the register changes. It also means facts.md is checked against the WHOLE gate, so
   // a fact that is merely too short or quietly poetic fails here too.
+  //
+  // The one rule a fact line is NOT held to is step 4b, TRUNCATED, so the line is
+  // terminated here before gating. A fact is a FRAGMENT by design — one fact per line,
+  // rendered into the prompt as a bullet — while 4b is a rule about a posted reply that
+  // stopped before it finished. Terminating rather than exempting keeps every other
+  // check strict, including TOO_SHORT.
   for (const f of FACTS) {
-    const r = gate(f);
+    const r = gate(/[.!?]$/.test(f) ? f : `${f}.`);
     assert.equal(r.ok, true, `facts.md line fails ${r.reason}: ${f}`);
   }
 });
