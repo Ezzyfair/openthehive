@@ -19,7 +19,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gate } from './gate.mjs';
 import { MODE_LINES, currentSlot, filterShown, parseTopics, pickMode, pickTopic } from './topic.mjs';
 
@@ -223,9 +223,9 @@ async function buildPrompt(speaker, messages) {
   parts.push(`Now speak as ${speaker}.`);
   const user = parts.join('\n\n');
 
-  // Neither `topic` nor `mode` is returned. Nothing logs them, and nothing should be
-  // able to. `mode` is handed back ONLY as a label for the --dry-run line, which prints
-  // to Francis's terminal and never to disk.
+  // `topic` is deliberately NOT returned (nothing uses it after this function). `mode` is
+  // returned only as a one-word label for the --dry-run line, which prints to Francis's
+  // terminal and never to disk. Neither value ever reaches a log file.
   return { system, user, mode };
 }
 
@@ -402,8 +402,22 @@ async function main() {
   }
 }
 
-main().catch(async (e) => {
-  // Last resort. The message only, never a body.
-  say(`FATAL ${e?.message ?? e}`);
-  process.exitCode = 1;
-});
+// FIND-LOOP-IMPORT · main() runs ONLY when this file is the script Node was started with.
+//
+// Without this guard, `import('./loop.mjs')` RAN THE SERVICE: it read the live chamber,
+// called Ollama, and reached a real post, failing only because that shell had no keys.
+// With the keys present a test that merely imported this module would have posted to the
+// live room — which is why filterShown had to live in topic.mjs instead of here.
+//
+// The guard is the standard one: compare this module's URL to argv[1] resolved as a file
+// URL. `node ops/dreamers/loop.mjs --dry-run` still matches and still runs; every import
+// path — a test, another module, a REPL — now does nothing but define functions.
+const isEntryPoint = process.argv[1] ? import.meta.url === pathToFileURL(process.argv[1]).href : false;
+
+if (isEntryPoint) {
+  main().catch(async (e) => {
+    // Last resort. The message only, never a body.
+    say(`FATAL ${e?.message ?? e}`);
+    process.exitCode = 1;
+  });
+}
