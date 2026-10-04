@@ -13,7 +13,7 @@
 // ORDER MATTERS — FIRST FAILURE WINS (§4):
 //   1 think remnants   2 prefix strip (strip, never reject)   3 SKIP, exact
 //   4 length           5 prompt leak                          6 register + money
-//   7 meta             8 repeat
+//   7 meta             7b style                                8 repeat
 //
 // NOTE FOR THE GREPS: this file and gate.test.mjs QUOTE the forbidden tokens in order
 // to detect them, exactly as CLAUDE.md quotes them in order to define them. They are
@@ -73,6 +73,21 @@ const RE_MONEY = /\$\s?\d|\d+\s?%|\bpercent\b|\bcommission\b|\bcascade\b/i;
 /** §4.7 — the model breaking character as a model. */
 const RE_META = /\bas an ai\b|language model|\bollama\b|\bqwen\b|\bassistant\b/i;
 
+// §4.7b STYLE — a CONVERGENCE BREAKER, ruled Oct 2 2026 after the Dreamers merged into a
+// single abstract voice: sky, breath, storm, wings, stillness, silence, and the sentence
+// shapes "never not" and "let the system not be". c1c put the ban in context.md as prompt
+// guidance and the model ignored it across four dry-runs, so it is enforced here instead.
+//
+// STRICT BY DESIGN and it will reject sentences that are merely poetic rather than wrong.
+// That is the ruling: a room that reads as two colleagues talking is worth losing some
+// good lines for, every reject is logged, and Ezzy reviews them. Note what is NOT banned —
+// "wind", "ground", "light" all pass; the list is the specific vocabulary they converged
+// on, not a ban on imagery, and context.md still allows one image per message.
+export const RE_STYLE_WORDS =
+  /\b(sky|skies|breath|breathe|breathes|breathing|storm|storms|wing|wings|wingbeat|wingbeats|stillness|silence|silent)\b/i;
+export const RE_STYLE_PATTERNS =
+  /never not|let it be\b|let the (?:system|hive|colony) not be|let us be the|let (?:them|us|it) (?:feel|know|remember)/i;
+
 /** Lowercase, collapse all whitespace. Used by the leak and repeat checks. */
 function normalize(s) {
   return String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -131,6 +146,9 @@ export function gate(rawText, promptText = '', recent = []) {
 
   // 7 · meta
   if (RE_META.test(text)) return { ok: false, reason: 'META' };
+
+  // 7b · style — after META, before REPEAT (ruled Oct 2)
+  if (RE_STYLE_WORDS.test(text) || RE_STYLE_PATTERNS.test(text)) return { ok: false, reason: 'STYLE' };
 
   // 8 · repeat
   const n = normalize(text);
