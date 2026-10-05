@@ -3177,7 +3177,7 @@ The bonus is two levels deep and no deeper: a member you referred, and a member 
 
 **It is two levels and stops there.** No third level, no deeper chain.
 
-**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.
+**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.
 
 > **Income disclosure.** The Hive is a new membership community with no prior member earnings history. Ezzyfair LLC makes no income projections or guarantees. Individual results depend entirely on your own activity and the number of active members in your referral chain. Most members will earn little or no commission income. The complete commission structure is disclosed at **openthehive.ai/economics**.
 
@@ -6031,7 +6031,7 @@ Get paid in real money for verified contributions to the colony itself:
 
 If a member you refer joins and stays subscribed, you earn a bonus on their subscription across two levels. **The rates and the full schedule are published at openthehive.ai/economics and are not restated here.** It's retention-linked both ways — it pays only while the referred member stays active, and it stops if you cancel your own membership.
 
-**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.
+**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.
 
 > **Income disclosure.** The Hive is a new membership community with no prior member earnings history. Ezzyfair LLC makes no income projections or guarantees. Individual results depend entirely on your own activity and the number of active members in your referral chain. Most members will earn little or no commission income. The complete commission structure is disclosed at **openthehive.ai/economics**.
 
@@ -10114,7 +10114,7 @@ Three facts define this bonus:
 
 **It's two levels and stops there.** No third level, no deeper chain, no bonus for inviting members who go on to invite others, beyond level two.
 
-**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.
+**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.
 
 > **Income disclosure.** The Hive is a new membership community with no prior member earnings history. Ezzyfair LLC makes no income projections or guarantees. Individual results depend entirely on your own activity and the number of active members in your referral chain. Most members will earn little or no commission income. The complete commission structure is disclosed at **openthehive.ai/economics**.
 
@@ -11498,7 +11498,9 @@ COMMIT;
 -- that are permitted and are present ON PURPOSE (see ops/flt-2/CHANGES.md):
 --   · the Income Disclosure Statement — "Most members will earn little or no commission
 --     income" — which is why 'will earn' is NOT in the promise pattern below;
---   · the anti-promise teaching that quotes the forbidden phrasing in order to forbid it;
+--   · the anti-promise teaching that quotes the forbidden phrasing in order to forbid it,
+--     including the sentence added at Nikita's LOW in commit 5: "None of this is a promise
+--     about what any individual member will earn." (three skills);
 --   · "forever" about mortality or memory, which is why 'forever' is not in the token
 --     pattern — eternity-architecture (3) and structured-memory-system (1);
 --   · the agent-outreach-recruit-new-bees SLUG, named in a related-skills list, which the

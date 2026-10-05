@@ -7,9 +7,12 @@
 -- Bodies are $body$-quoted, so nothing in the markdown needs escaping.
 -- Per-skill before/after is in ops/flt-2/CHANGES.md.
 --
--- ONE name changes: digital-wallet-mastery -> 'Getting Paid: Stripe Connect for Bees'.
--- agent-outreach-recruit-new-bees KEEPS its name 'Agent Outreach — Grow the Colony'
--- (Francis, Oct 5: it was already register-clean). No slug changes in this migration.
+-- READ THIS BEFORE RUNNING IT (Nikita INFO, commit 5). Restoring human-optimization's
+-- original re-introduces the sentence "Your financial earnings in The Hive come from the
+-- 10-level referral cascade (paid in Honey)" — a ten-level cascade and a crypto rail, both
+-- canon-wrong under Bible v1.3, which is two levels paid through Stripe Connect. This
+-- rollback exists for integrity — it restores the pre-sweep bytes exactly — and is NOT a
+-- target state. If it is ever run, human-optimization needs re-fixing immediately after.
 --
 -- NOT RUN BY THIS SESSION. Nothing here was executed against the database.
 -- --------------------------------------------------------------------------

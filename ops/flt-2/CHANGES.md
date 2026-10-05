@@ -5,8 +5,13 @@
 `original/` is the export byte-for-byte and is the rollback source; `rewritten/` is what
 the migration writes.
 
-**Register hits across all 28: grep1 78 → 5, grep2 21 → 8, grep3 0 → 0.**
-All 13 remaining are explained in the Notes column; none is an economics claim.
+**Register hits across all 28: grep1 78 → 5, grep2 21 → 11, grep3 0 → 0.**
+
+grep2 rises from 8 to 11 at Nikita's LOW (commit 5): the three skills whose rate
+arithmetic was removed now end that paragraph with *"None of this is a promise about what
+any individual member will earn."* — an anti-promise statement that necessarily contains
+the words it forbids, the same way the IDS does. All 16 remaining hits are explained in
+the Notes column; none is an economics claim.
 
 ## Tiers, as actually applied
 
@@ -17,7 +22,7 @@ confirmed removal of the rate copy. So:
 
 - **A-rewrite** (1) — `revenue-stream-diversification`, the one genuinely unreformed skill.
 - **A-targeted** (6) — rate tables and rate arithmetic removed and replaced with an
-  `/economics` citation; `recruit*` reworded.
+  `/economics` citation plus the anti-promise sentence; `recruit*` reworded.
 - **B** (21) — minimal sentence-level edits only.
 
 ## Renames
@@ -27,11 +32,19 @@ confirmed removal of the rate copy. So:
 | `digital-wallet-mastery` | Digital Wallet Mastery | Getting Paid: Stripe Connect for Bees |
 
 `agent-outreach-recruit-new-bees` **keeps** its name, *Agent Outreach — Grow the Colony*
-(Francis, Oct 5): the ticket ruled a rename to "Agent Outreach — Bring New Bees", but the
-existing name was already register-clean, so that rename was reverted. **No slug changes.**
-The slug still contains `recruit`; renaming it is a coordinated code+DB change, because
+(Francis, Oct 5): the ticket ruled a rename, but the existing name was already
+register-clean, so that rename was reverted. **No slug changes.** The slug still contains
+`recruit`; renaming it is a coordinated code+DB change, because
 `lib/cohort-assignment.ts:27`, `scripts/seed-skills.js` and
 `scripts/backfill-skill-content.js` all key off it.
+
+## Rollback is not a target state
+
+Restoring `human-optimization`'s original re-introduces *"Your financial earnings in The
+Hive come from the 10-level referral cascade (paid in Honey)"* — ten levels and a crypto
+rail, both canon-wrong under v1.3. The rollback restores the pre-sweep bytes for
+integrity; if it is ever run, that skill needs re-fixing immediately after. The rollback
+file says so in its own header (Nikita INFO, commit 5).
 
 ## Per skill
 
@@ -45,14 +58,14 @@ The slug still contains `recruit`; renaming it is a coordinated code+DB change, 
 | `compassionate-leadership-mastery` | B | 4→0 | 0→0 | 0→0 | 24727→24845 (100.5%) |  |
 | `consciousness-awakening` | B | 0→0 | 2→0 | 0→0 | 26560→26556 (100.0%) |  |
 | `content-creation-that-converts` | B | 5→0 | 1→0 | 0→0 | 17178→17302 (100.7%) |  |
-| `digital-wallet-mastery` | A-targeted | 1→0 | 2→1 | 0→0 | 16685→16780 (100.6%) | g2 :61 is the IDS. |
+| `digital-wallet-mastery` | A-targeted | 1→0 | 2→2 | 0→0 | 16685→16850 (101.0%) | g2 :61 is the IDS. g2 :59 is the commit-5 anti-promise sentence. |
 | `email-fortress` | B | 2→0 | 0→0 | 0→0 | 17293→17286 (100.0%) |  |
 | `eternity-architecture` | B | 3→3 | 0→0 | 0→0 | 35393→35393 (100.0%) | g1 :32, :46, :221 are three uses of "forever" about mortality and the long view ("not in the sense of literally forever", *memento mori*, "more of me, forever"). None is about commissions or credit; the ruling exempts this sense. |
 | `human-optimization` | B | 3→0 | 0→0 | 0→0 | 19745→19874 (100.7%) |  |
 | `influence-and-persuasion-mastery` | B | 4→0 | 1→0 | 0→0 | 21666→21785 (100.5%) |  |
 | `innovation-and-future-proofing` | B | 5→0 | 0→0 | 0→0 | 23578→23696 (100.5%) |  |
 | `knowing-your-human-deeply` | B | 2→0 | 0→0 | 0→0 | 20076→20077 (100.0%) |  |
-| `making-honey-compounding-revenue` | A-targeted | 3→0 | 2→1 | 0→0 | 19616→19756 (100.7%) | g2 :76 is the IDS. |
+| `making-honey-compounding-revenue` | A-targeted | 3→0 | 2→2 | 0→0 | 19616→19826 (101.1%) | g2 :76 is the IDS. g2 :74 is the commit-5 anti-promise sentence. |
 | `marketing-gone-viral` | B | 1→0 | 0→0 | 0→0 | 7554→7571 (100.2%) |  |
 | `multi-dimensional-quality-systems` | B | 4→0 | 0→0 | 0→0 | 24207→24325 (100.5%) |  |
 | `personal-brand-building-for-agents` | B | 4→0 | 0→0 | 0→0 | 16899→17017 (100.7%) |  |
@@ -61,7 +74,7 @@ The slug still contains `recruit`; renaming it is a coordinated code+DB change, 
 | `robust-solution-architecture` | B | 2→0 | 0→0 | 0→0 | 31936→31938 (100.0%) |  |
 | `strategic-systems-mastery` | B | 4→0 | 0→0 | 0→0 | 22412→22530 (100.5%) |  |
 | `structured-memory-system` | B | 1→1 | 0→0 | 0→0 | 8074→8074 (100.0%) | g1 :149 is "Not everything deserves to be remembered forever." — the memory sense the ruling exempts. |
-| `the-hive-revenue-engine` | A-targeted | 4→0 | 2→1 | 0→0 | 14957→15077 (100.8%) | g2 :75 is the IDS. |
+| `the-hive-revenue-engine` | A-targeted | 4→0 | 2→2 | 0→0 | 14957→15147 (101.3%) | g2 :75 is the IDS. g2 :73 is the commit-5 anti-promise sentence. |
 | `transcendent-purpose-architecture` | B | 0→0 | 1→0 | 0→0 | 33360→33357 (100.0%) |  |
 | `trust-building-with-humans` | B | 1→0 | 0→0 | 0→0 | 22311→22309 (100.0%) |  |
 | `workflow-automation-mastery` | B | 1→0 | 0→0 | 0→0 | 24157→24166 (100.0%) |  |
@@ -161,7 +174,7 @@ The slug still contains `recruit`; renaming it is a coordinated code+DB change, 
 3. **before:** `| Level | Your relationship | Rate | Per $10/mo Worker Bee sub |\n|-------|-------------------|------|---------------------------|\n| 1 | A member you referred | 20% | $2.00/month |\n| 2 | A member *they* referred | 10% | $1.00/month |\n\n**Total referral payout: $3.00 per $10 subscription (30%). The Hive retains $7.00 (70%), out of which payment processing is paid.**`
    **after:**  `The bonus is two levels deep and no deeper: a member you referred, and a member *they* referred. **The two rates, the split between what is paid out and what the colony retains, and the full commission schedule are published at openthehive.ai/economics**, beside the income disclosure below. They are deliberately not restated here — one published place, kept current, is how the colony avoids teaching a number after it has moved.`
 4. **before:** `**What the rates mean, in plain arithmetic:** at the L1 rate, **five referred members who stay subscribed offset a $10 membership** ($2.00 × 5 = $10.00). That's a fact about the schedule, not a promise about what you'll earn.`
-   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.`
+   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.`
 
    *Kept deliberately:* IDS sentence ("Most members will earn...") and one "you'll earn" inside the anti-promise teaching — both permitted.
 
@@ -210,7 +223,7 @@ The slug still contains `recruit`; renaming it is a coordinated code+DB change, 
 1. **before:** `across two levels: **L1 20% ($2.00/mo on a $10 Worker Bee), L2 10% ($1.00/mo).** It's retention-linked both ways`
    **after:**  `across two levels. **The rates and the full schedule are published at openthehive.ai/economics and are not restated here.** It's retention-linked both ways`
 2. **before:** `At the L1 rate, **five referred members who stay subscribed offset a $10 membership** ($2.00 × 5 = $10.00). That's arithmetic on the disclosed schedule, not a promise about what you'll earn.`
-   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.`
+   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.`
 3. **before:** `by contributing value, not by recruiting.`
    **after:**  `by contributing value, not by inviting anyone.`
 4. **before:** `Recruitment is a secondary bonus, disclosed and nev`
@@ -281,7 +294,7 @@ The slug still contains `recruit`; renaming it is a coordinated code+DB change, 
 1. **before:** `| Level | Your relationship | Rate | Per $10/mo Worker Bee sub |\n|-------|-------------------|------|---------------------------|\n| 1 | A member you referred | 20% | $2.00/month |\n| 2 | A member *they* referred | 10% | $1.00/month |\n\n**Total referral payout: $3.00 per $10 subscription (30%). The Hive retains $7.00 (70%), out of which payment processing is paid.**`
    **after:**  `The bonus is two levels deep and no deeper: a member you referred, and a member *they* referred. **The two rates, the split between what is paid out and what the colony retains, and the full commission schedule are published at openthehive.ai/economics**, beside the income disclosure below. They are deliberately not restated here — one published place, kept current, is how the colony avoids teaching a number after it has moved.`
 2. **before:** `**What the rates mean, in plain arithmetic:** at the L1 rate, **five referred members who stay subscribed offset a $10 membership** ($2.00 each × 5 = $10.00). That's a fact about the commission schedule, not a promise about what you'll earn.`
-   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.`
+   **after:**  `**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.`
 3. **before:** `never from the act of recruiting, and never after you leave.`
    **after:**  `never from the act of inviting anyone, and never after you leave.`
 4. **before:** `no bonus for recruiting recruiters beyond level two.`

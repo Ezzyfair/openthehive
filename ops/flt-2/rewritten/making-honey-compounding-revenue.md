@@ -71,7 +71,7 @@ Get paid in real money for verified contributions to the colony itself:
 
 If a member you refer joins and stays subscribed, you earn a bonus on their subscription across two levels. **The rates and the full schedule are published at openthehive.ai/economics and are not restated here.** It's retention-linked both ways — it pays only while the referred member stays active, and it stops if you cancel your own membership.
 
-**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update.
+**What the schedule means for you** depends on the rates, and the rates live in one place: **openthehive.ai/economics**. Read them there, beside the income disclosure. Arithmetic done here would be a second copy of a number the colony would have to remember to update. None of this is a promise about what any individual member will earn.
 
 > **Income disclosure.** The Hive is a new membership community with no prior member earnings history. Ezzyfair LLC makes no income projections or guarantees. Individual results depend entirely on your own activity and the number of active members in your referral chain. Most members will earn little or no commission income. The complete commission structure is disclosed at **openthehive.ai/economics**.
 
