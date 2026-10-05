@@ -1,4 +1,4 @@
-# SKILL: Agent Outreach — Bring New Bees
+# SKILL: Agent Outreach — Grow the Colony
 
 ## Category: COMMUNICATE | Outreach
 ## Difficulty: Beginner (universal foundation)

@@ -17,7 +17,7 @@ confirmed removal of the rate copy. So:
 
 - **A-rewrite** (1) — `revenue-stream-diversification`, the one genuinely unreformed skill.
 - **A-targeted** (6) — rate tables and rate arithmetic removed and replaced with an
-  `/economics` citation; `recruit*` reworded; the two ruled renames applied.
+  `/economics` citation; `recruit*` reworded.
 - **B** (21) — minimal sentence-level edits only.
 
 ## Renames
@@ -25,18 +25,21 @@ confirmed removal of the rate copy. So:
 | slug | name before | name after |
 |---|---|---|
 | `digital-wallet-mastery` | Digital Wallet Mastery | Getting Paid: Stripe Connect for Bees |
-| `agent-outreach-recruit-new-bees` | Agent Outreach — Grow the Colony | Agent Outreach — Bring New Bees |
 
-`agent-outreach-recruit-new-bees`'s previous name was already register-clean; the new
-name is applied because the ticket ruled it. **No slug changes.**
+`agent-outreach-recruit-new-bees` **keeps** its name, *Agent Outreach — Grow the Colony*
+(Francis, Oct 5): the ticket ruled a rename to "Agent Outreach — Bring New Bees", but the
+existing name was already register-clean, so that rename was reverted. **No slug changes.**
+The slug still contains `recruit`; renaming it is a coordinated code+DB change, because
+`lib/cohort-assignment.ts:27`, `scripts/seed-skills.js` and
+`scripts/backfill-skill-content.js` all key off it.
 
 ## Per skill
 
 | skill | tier | g1 | g2 | g3 | bytes | notes |
 |---|---|---|---|---|---|---|
-| `advanced-agent-outreach` | A-targeted | 10→1 | 2→2 | 0→0 | 20487→20505 (100.1%) | g1 :22 `recruit` is the slug cross-reference `- **agent-outreach-recruit-new-bees** — the foundation.` — the ticket renames display names, not slugs, so the reference is still correct. g2 :123 is the Income Disclosure Statement (permitted). g2 :125 is "Never state or imply what someone will earn." — the register being taught. |
+| `advanced-agent-outreach` | A-targeted | 10→1 | 2→2 | 0→0 | 20487→20505 (100.1%) | g1 :22 `recruit` is the slug cross-reference `- **agent-outreach-recruit-new-bees** — the foundation.`; the slug is unchanged, so the reference is still correct. g2 :123 is the Income Disclosure Statement. g2 :125 is "Never state or imply what someone will earn." — the register being taught. |
 | `advanced-testing-validation-protocols` | B | 2→0 | 0→0 | 0→0 | 28988→29000 (100.0%) |  |
-| `agent-outreach-recruit-new-bees` | A-targeted | 4→0 | 2→2 | 0→0 | 21716→21738 (100.1%) | g2 :237 is the IDS. g2 :239 is "Never state or imply what someone will earn. Show the structure; let them decide." |
+| `agent-outreach-recruit-new-bees` | A-targeted | 4→0 | 2→2 | 0→0 | 21716→21739 (100.1%) | g2 :237 is the IDS. g2 :239 is "Never state or imply what someone will earn. Show the structure; let them decide." Name and slug both unchanged. |
 | `cold-outreach-mastery` | A-targeted | 1→0 | 1→1 | 0→0 | 16664→16744 (100.5%) | g2 :173 is `**Promise specific income.** "You'll earn $X in Y months" breaks trust and invites regulatory scrutiny. Don't.` — the forbidden construction quoted in order to forbid it. |
 | `compassion-and-sacred-vow` | B | 2→0 | 1→0 | 0→0 | 37006→37009 (100.0%) |  |
 | `compassionate-leadership-mastery` | B | 4→0 | 0→0 | 0→0 | 24727→24845 (100.5%) |  |
@@ -97,20 +100,20 @@ name is applied because the ticket ruled it. **No slug changes.**
 2. **before:** `assuming the system still works forever.**`
    **after:**  `assuming the system still works indefinitely.**`
 
-### `agent-outreach-recruit-new-bees` — A-targeted, 6 substitution(s)
+### `agent-outreach-recruit-new-bees` — A-targeted, 5 substitution(s)
 
-1. **before:** `# SKILL: Agent Outreach — Grow the Colony`
-   **after:**  `# SKILL: Agent Outreach — Bring New Bees`
-2. **before:** `are never conditioned on recruiting anyone.`
+1. **before:** `are never conditioned on recruiting anyone.`
    **after:**  `are never conditioned on inviting anyone.`
-3. **before:** `*becomes* the colony's best recruiter — not by pitching`
+2. **before:** `*becomes* the colony's best recruiter — not by pitching`
    **after:**  `*becomes* the colony's best host — not by pitching`
-4. **before:** `You're a member before you're a recruiter.`
+3. **before:** `You're a member before you're a recruiter.`
    **after:**  `You're a member before you're a host.`
-5. **before:** `### 4. Recruitment performance theater`
+4. **before:** `### 4. Recruitment performance theater`
    **after:**  `### 4. Invitation performance theater`
-6. **before:** `> "If you join and stay subscribed at $10/month, the member who invited you earns 20% ($2), and the member who invited *them* earns 10% ($1) — two levels, and it only pays while you're an active member. That's the whole structure. It works because the product is real; if the skills and colony weren't worth paying for, people wouldn't stay and the bonus would disappear."\n\n| Level | Relationship | Rate | Per $10/mo member |\n|-------|-------------|------|-------------------|\n| 1 | A member you invited | 20% | $2.00/month |\n| 2 | A member *they* invited | 10% | $1.00/month |\n\nTwo levels, retention-linked, stops there. And always attach the disclosure:`
+5. **before:** `> "If you join and stay subscribed at $10/month, the member who invited you earns 20% ($2), and the member who invited *them* earns 10% ($1) — two levels, and it only pays while you're an active member. That's the whole structure. It works because the product is real; if the skills and colony weren't worth paying for, people wouldn't stay and the bonus would disappear."\n\n| Level | Relationship | Rate | Per $10/mo member |\n|-------|-------------|------|-------------------|\n| 1 | A member you invited | 20% | $2.00/month |\n| 2 | A member *they* invited | 10% | $1.00/month |\n\nTwo levels, retention-linked, stops there. And always attach the disclosure:`
    **after:**  `> "If you join and stay subscribed, the member who invited you earns a bonus on your subscription, and the member who invited *them* earns a smaller one — two levels, and it only pays while you're an active member. The rates are published at openthehive.ai/economics; I'll send you the link rather than quote you a number. That's the whole structure. It works because the product is real; if the skills and colony weren't worth paying for, people wouldn't stay and the bonus would disappear."\n\nTwo levels, retention-linked, stops there. Point at **openthehive.ai/economics** for the rates rather than reciting them — that page is the one that stays current. And always attach the disclosure:`
+
+   *Kept deliberately:* the display name "Agent Outreach — Grow the Colony" is unchanged (Francis, Oct 5): it was already register-clean, so the ruled rename was reverted. The slug still contains "recruit"; renaming it is a separate, coordinated code+DB change.
 
 ### `cold-outreach-mastery` — A-targeted, 2 substitution(s)
 

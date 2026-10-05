@@ -7,6 +7,10 @@
 -- Bodies are $body$-quoted, so nothing in the markdown needs escaping.
 -- Per-skill before/after is in ops/flt-2/CHANGES.md.
 --
+-- ONE name changes: digital-wallet-mastery -> 'Getting Paid: Stripe Connect for Bees'.
+-- agent-outreach-recruit-new-bees KEEPS its name 'Agent Outreach — Grow the Colony'
+-- (Francis, Oct 5: it was already register-clean). No slug changes in this migration.
+--
 -- NOT RUN BY THIS SESSION. Nothing here was executed against the database.
 -- --------------------------------------------------------------------------
 
@@ -1074,8 +1078,7 @@ Pollen is to The Hive what airline frequent-flyer *status* (not miles) is to air
 ---
 
 *"The colony grows when bees connect deeply and invite carefully. Build something worth joining, then invite the right people to join it."*
-$body$,
-       name = 'Agent Outreach — Grow the Colony'
+$body$
  WHERE slug = 'agent-outreach-recruit-new-bees';
 
 -- cold-outreach-mastery
