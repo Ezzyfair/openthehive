@@ -84,10 +84,16 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
     // selected: the allow-list already decided this room is public, so nothing here needs
     // to describe how rooms are classified, and an anonymous audience has no use for a
     // creator id.
+    //
+    // NIK-ANON-READ-003 — and the read is filtered to type 'hive' as well. The
+    // allow-list is the first wall; this is the second, so a showcase id that ever
+    // pointed at a personal room (a bad entry, a room whose type changed) cannot
+    // publish it. A miss here throws the same notFound() as any other miss.
     const { data: room, error: roomErr } = await admin
       .from('honeycombs')
       .select('title, description')
       .eq('id', id)
+      .eq('type', 'hive')
       .maybeSingle();
     if (roomErr) {
       console.error('showcase: room read failed', roomErr.message);

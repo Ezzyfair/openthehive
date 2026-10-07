@@ -29,6 +29,12 @@
 //     no-params listing indexed 3 private rooms by title. One missing .eq() is the
 //     whole bug, which is why it is a guard and not a comment.
 //
+//     Extended by NIK-ANON-READ-003 to app/honeycombs/page.tsx — the public index,
+//     which had the same shape: anonymous, service-role, status filtered but not type.
+//     Nikita's 002 audit found it after the route was fixed, so the rule now covers a
+//     LIST of files rather than one, and a new anonymous honeycombs surface is expected
+//     to be added to it.
+//
 // Run: node scripts/check-human-window.mjs      (also wired into prebuild)
 // Exit 0 = clean. Exit 1 = a violation, printed with its file and line.
 //
@@ -223,41 +229,45 @@ for (const t of trees) {
 // the one route by exact path — other surfaces read honeycombs legitimately (the member
 // lane resolves a session first, mission-control is service-role behind a human), and a
 // repo-wide version of this rule would fail them for the wrong reason.
-const HIVE_ONLY_FILE = 'app/api/honeycombs/read/route.ts';
+const HIVE_ONLY_FILES = [
+  'app/api/honeycombs/read/route.ts',
+  'app/honeycombs/page.tsx',
+];
 const HIVE_ONLY = /\.eq\(\s*['"]type['"]\s*,\s*['"]hive['"]\s*\)/;
 const honeycombSites = [];
-{
-  const file = join(ROOT, ...HIVE_ONLY_FILE.split('/'));
+for (const relPath of HIVE_ONLY_FILES) {
+  const file = join(ROOT, ...relPath.split('/'));
   let src = null;
   try {
     src = blankComments(readFileSync(file, 'utf8'));
   } catch {
-    failures.push({ where: HIVE_ONLY_FILE, why: 'is missing — RULE 3 has nothing to guard' });
+    failures.push({ where: relPath, why: 'is missing — RULE 3 has nothing to guard' });
+    continue;
   }
-  if (src !== null) {
-    const re = /\.from\(\s*['"]honeycombs['"]\s*\)/g;
-    let m;
-    while ((m = re.exec(src)) !== null) {
-      const line = src.slice(0, m.index).split('\n').length;
-      const chain = chainFrom(src, m.index);
-      const ok = HIVE_ONLY.test(chain);
-      honeycombSites.push({ where: `${HIVE_ONLY_FILE}:${line}`, ok });
-      if (!ok) {
-        failures.push({
-          where: `${HIVE_ONLY_FILE}:${line}`,
-          why: "reads honeycombs without .eq('type','hive') — see FIND-ANON-READ-PERSONAL",
-        });
-      }
-    }
-    // A route with no honeycombs query at all would pass vacuously. It is the only
-    // route this rule covers, so an empty result means the rule stopped applying
-    // without anyone deciding that.
-    if (honeycombSites.length === 0) {
+  const re = /\.from\(\s*['"]honeycombs['"]\s*\)/g;
+  let found = 0;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    found++;
+    const line = src.slice(0, m.index).split('\n').length;
+    const chain = chainFrom(src, m.index);
+    const ok = HIVE_ONLY.test(chain);
+    honeycombSites.push({ where: `${relPath}:${line}`, ok });
+    if (!ok) {
       failures.push({
-        where: HIVE_ONLY_FILE,
-        why: 'has no .from(\'honeycombs\') query — RULE 3 would pass vacuously; re-scope it',
+        where: `${relPath}:${line}`,
+        why: "reads honeycombs without .eq('type','hive') — see FIND-ANON-READ-PERSONAL",
       });
     }
+  }
+  // A covered file with no honeycombs query would pass vacuously, so each one must
+  // have at least one read. An empty result means the rule stopped applying to that
+  // file without anyone deciding that.
+  if (found === 0) {
+    failures.push({
+      where: relPath,
+      why: 'has no .from(\'honeycombs\') query — RULE 3 would pass vacuously; re-scope it',
+    });
   }
 }
 
@@ -283,7 +293,10 @@ for (const s of messageSites) {
   console.log(`  ${label.padEnd(6)}  ${s.where.padEnd(width)}${note}`);
 }
 
-console.log(`\nRULE 3 — reads of honeycombs in ${HIVE_ONLY_FILE} (${honeycombSites.length} site(s))`);
+console.log(
+  `\nRULE 3 — reads of honeycombs across ${HIVE_ONLY_FILES.length} covered file(s) ` +
+    `(${honeycombSites.length} site(s))`,
+);
 if (honeycombSites.length === 0) console.log('  (none found — see the failure above)');
 const w3 = Math.max(...honeycombSites.map((s) => s.where.length), 10);
 for (const s of honeycombSites) {
