@@ -20,6 +20,15 @@
 //     constraint (Francis, SQL, Sept 26: 0 rows) — the column is free-form, so a
 //     new value can appear at any time and only an allow-list excludes it.
 //
+//   RULE 3 (FIND-ANON-READ-PERSONAL, NIK-ANON-READ-001)
+//     app/api/honeycombs/read/route.ts — every read of `honeycombs` must filter
+//     .eq('type','hive'). That route takes no session and builds its client with
+//     the service role, so RLS is bypassed and the filter list is the ONLY thing
+//     deciding what an anonymous caller may read. Measured Oct 6: an anonymous
+//     ?title= returned 200 and 10 messages from a type 'personal' chamber, and the
+//     no-params listing indexed 3 private rooms by title. One missing .eq() is the
+//     whole bug, which is why it is a guard and not a comment.
+//
 // Run: node scripts/check-human-window.mjs      (also wired into prebuild)
 // Exit 0 = clean. Exit 1 = a violation, printed with its file and line.
 //
@@ -208,6 +217,50 @@ for (const t of trees) {
   }
 }
 
+// ── RULE 3 ──────────────────────────────────────────────────────────────────
+// Same machinery as RULE 2: blank the comments so prose about the rule cannot satisfy
+// it, then walk each .from('honeycombs') chain and require the type filter. Scoped to
+// the one route by exact path — other surfaces read honeycombs legitimately (the member
+// lane resolves a session first, mission-control is service-role behind a human), and a
+// repo-wide version of this rule would fail them for the wrong reason.
+const HIVE_ONLY_FILE = 'app/api/honeycombs/read/route.ts';
+const HIVE_ONLY = /\.eq\(\s*['"]type['"]\s*,\s*['"]hive['"]\s*\)/;
+const honeycombSites = [];
+{
+  const file = join(ROOT, ...HIVE_ONLY_FILE.split('/'));
+  let src = null;
+  try {
+    src = blankComments(readFileSync(file, 'utf8'));
+  } catch {
+    failures.push({ where: HIVE_ONLY_FILE, why: 'is missing — RULE 3 has nothing to guard' });
+  }
+  if (src !== null) {
+    const re = /\.from\(\s*['"]honeycombs['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const line = src.slice(0, m.index).split('\n').length;
+      const chain = chainFrom(src, m.index);
+      const ok = HIVE_ONLY.test(chain);
+      honeycombSites.push({ where: `${HIVE_ONLY_FILE}:${line}`, ok });
+      if (!ok) {
+        failures.push({
+          where: `${HIVE_ONLY_FILE}:${line}`,
+          why: "reads honeycombs without .eq('type','hive') — see FIND-ANON-READ-PERSONAL",
+        });
+      }
+    }
+    // A route with no honeycombs query at all would pass vacuously. It is the only
+    // route this rule covers, so an empty result means the rule stopped applying
+    // without anyone deciding that.
+    if (honeycombSites.length === 0) {
+      failures.push({
+        where: HIVE_ONLY_FILE,
+        why: 'has no .from(\'honeycombs\') query — RULE 3 would pass vacuously; re-scope it',
+      });
+    }
+  }
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(
   `RULE 1 — app/api/member/** (${memberCount}), app/api/public/** (${publicCount}), ` +
@@ -230,6 +283,14 @@ for (const s of messageSites) {
   console.log(`  ${label.padEnd(6)}  ${s.where.padEnd(width)}${note}`);
 }
 
+console.log(`\nRULE 3 — reads of honeycombs in ${HIVE_ONLY_FILE} (${honeycombSites.length} site(s))`);
+if (honeycombSites.length === 0) console.log('  (none found — see the failure above)');
+const w3 = Math.max(...honeycombSites.map((s) => s.where.length), 10);
+for (const s of honeycombSites) {
+  console.log(`  ${(s.ok ? 'ok' : 'FAIL').padEnd(6)}  ${s.where.padEnd(w3)}` +
+    (s.ok ? "  type = 'hive'" : "  missing .eq('type','hive')"));
+}
+
 if (failures.length > 0) {
   console.error(`\ncheck-human-window: ${failures.length} violation(s).`);
   process.exit(1);
@@ -238,6 +299,7 @@ const guarded = messageSites.filter((s) => !s.verdict.exempt).length;
 const exemptCount = messageSites.length - guarded;
 console.log(
   `\ncheck-human-window: rule 1 clean (${memberCount} member, ${publicCount} public, ${cronCount} cron); ` +
-    `rule 2 clean (${guarded} content read(s) filtered, ${exemptCount} exempt and printed).`,
+    `rule 2 clean (${guarded} content read(s) filtered, ${exemptCount} exempt and printed); ` +
+    `rule 3 clean (${honeycombSites.length} honeycombs read(s) filtered to type 'hive').`,
 );
 process.exit(0);

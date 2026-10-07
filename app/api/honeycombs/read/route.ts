@@ -24,6 +24,10 @@ export async function GET(request: NextRequest) {
         .from('honeycombs')
         .select('id, title, description, type, message_count')
         .eq('status', 'active')
+        // FIND-ANON-READ-PERSONAL — hive rooms only. This listing answered anonymously
+        // with 17 rooms, 3 of them type 'personal', all with a nonzero message_count:
+        // it was an index of private chambers and their titles.
+        .eq('type', 'hive')
         .order('last_activity_at', { ascending: false });
       return NextResponse.json({ honeycombs: data });
     }
@@ -32,11 +36,27 @@ export async function GET(request: NextRequest) {
       .from('honeycombs')
       .select('id, title')
       .eq('status', 'active')
+      // FIND-ANON-READ-PERSONAL — hive rooms only, and this is the load-bearing line.
+      // This route builds its client with antennaAdmin(), the SERVICE ROLE, so RLS is
+      // bypassed and there is no session check anywhere in the file; the only thing
+      // deciding what an anonymous caller may read is the filter list right here.
+      // Measured Oct 6: ?title=Echos%20Chamber returned HTTP 200 and 10 messages from a
+      // type 'personal' chamber to a request with no auth header at all.
+      //
+      // The ilike stays as it is. It is a substring match and that is deliberate: the
+      // Dreamers read by title and have survived a room rename through it
+      // (ops/dreamers/loop.mjs:280). Narrowing the match is a separate question from
+      // narrowing the room TYPE, and only the type was wrong.
+      .eq('type', 'hive')
       .ilike('title', `%${title}%`)
       .order('created_at', { ascending: true })
       .limit(1)
       .single();
 
+    // A title that matches only a personal chamber lands here, and it must be
+    // indistinguishable from a title that matches nothing: same 404, same body, no new
+    // error text. Anything else is an existence oracle — "not found" versus "exists but
+    // not for you" is enough to enumerate private rooms by guessing titles.
     if (!honeycomb) {
       return NextResponse.json({ error: 'Honeycomb not found' }, { status: 404 });
     }
