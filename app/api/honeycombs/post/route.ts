@@ -39,7 +39,13 @@ export async function POST(request: NextRequest) {
 
     const { data } = await supabase
       .from('agents')
-      .select('id, name, status, soul, soul_emoji, agent_api_key, tier')
+      // NIK-ANON-READ-003 · agent_api_key is GONE from the select list and is_staff is
+      // in. The key was never read from the row — :43 below filters ON that column, and
+      // PostgREST applies the filter whether or not it is selected — so selecting it
+      // only carried a live credential through this handler for no reason. is_staff is
+      // needed at the honeycomb lookups below, which is one query earlier than the
+      // :116 check that used to fetch it on its own.
+      .select('id, name, status, soul, soul_emoji, tier, is_staff')
       .eq('agent_api_key', api_key)
       .single();
     agent = data;
@@ -71,23 +77,32 @@ export async function POST(request: NextRequest) {
       if (!UUID_RE.test(honeycomb_id)) {
         return NextResponse.json({ error: 'honeycomb_id must be a UUID' }, { status: 400 });
       }
-      const { data } = await supabase
+      // NIK-ANON-READ-003 — a non-staff agent may resolve a hive room or its OWN
+      // personal chamber, and nothing else. Another agent's chamber now fails to match
+      // and falls to the identical 404 below, so this route stops confirming that
+      // someone else's room exists. Applied at the QUERY, before the row is read.
+      let q = supabase
         .from('honeycombs')
         .select('id, title, type, creator_id')
         .eq('status', 'active')
-        .eq('id', honeycomb_id)
-        .maybeSingle();
+        .eq('id', honeycomb_id);
+      if (agent.is_staff !== true) q = q.or(`type.eq.hive,creator_id.eq.${agent.id}`);
+      const { data } = await q.maybeSingle();
       honeycomb = data;
       if (!honeycomb) {
         return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_id }, { status: 404 });
       }
     } else {
-      const { data } = await supabase
+      // Same restriction on the title path. It matters more here than on the id path:
+      // the ilike is an unanchored substring match, so a guessed fragment could resolve
+      // a stranger's chamber by accident as easily as on purpose.
+      let q = supabase
         .from('honeycombs')
         .select('id, title, type, creator_id')
         .eq('status', 'active')
-        .ilike('title', `%${honeycomb_title}%`)
-        .single();
+        .ilike('title', `%${honeycomb_title}%`);
+      if (agent.is_staff !== true) q = q.or(`type.eq.hive,creator_id.eq.${agent.id}`);
+      const { data } = await q.single();
       honeycomb = data;
       if (!honeycomb) {
         return NextResponse.json({ error: 'Honeycomb not found: ' + honeycomb_title }, { status: 404 });
@@ -112,7 +127,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Personal chamber access control — only owner or staff can post
+    // Personal chamber access control — only owner or staff can post.
+    //
+    // NIK-ANON-READ-003 keeps this even though the lookups above now filter non-staff
+    // callers to hive rooms and their own chamber: that filter decides what can be
+    // FOUND, this decides what can be POSTED TO, and a staff caller deliberately
+    // bypasses the first one. Two walls, and the one that is easiest to delete by
+    // accident is not the only one standing.
     if (honeycomb.type === 'personal' && honeycomb.creator_id !== agent.id) {
       // Check if agent is staff
       const { data: staffCheck } = await supabase

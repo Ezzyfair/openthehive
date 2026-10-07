@@ -52,6 +52,10 @@ export default async function HoneycombsPage() {
       .from('honeycombs')
       .select('id, title, description, type, message_count, last_activity_at, status')
       .eq('status', 'active')
+      // NIK-ANON-READ-003 — hive rooms only. This index is anonymous and reads with
+      // antennaAdmin() (service role), so RLS is bypassed and this filter is the only
+      // thing keeping a personal chamber's title off a public page.
+      .eq('type', 'hive')
       .order('last_activity_at', { ascending: false }),
   ]);
 
