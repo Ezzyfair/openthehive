@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { recordSubscriptionEarnings, getAgentEarnings } from '@/lib/referral-engine';
+import { getAgentEarnings } from '@/lib/referral-engine';
 
 function getSupabase() {
   return createClient(
@@ -48,17 +48,21 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// POST /api/referrals/process — called by Stripe webhook monthly
-export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { agent_id, amount, month } = body;
-
-  if (!agent_id || !amount || !month) {
-    return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
-  }
-
-  const supabase = getSupabase();
-  const result = await recordSubscriptionEarnings(agent_id, amount, month, supabase);
-
-  return NextResponse.json({ success: true, ...result });
+// NIK-RAIL-000 — DEFUSED. Ruled by Francis Oct 12 (RAIL-DESIGN-v1.1 §15 row 0, R-G).
+//
+// WHAT WAS HERE: POST called recordSubscriptionEarnings(agent_id, amount, month) —
+// it CREATED ACCRUALS in referral_earnings and hive_revenue — and it checked NO
+// credential at all. Not a key, not a signature, not a secret: any unauthenticated
+// request with three JSON fields minted commission rows for any agent id, at any
+// amount, for any month. Its own comment claimed it was "called by Stripe webhook
+// monthly", which was never true; the webhook calls the engine directly
+// (app/api/stripe/webhook/route.ts:170).
+//
+// Returns 410 Gone and does nothing else — no auth check, no database call, no Stripe
+// call. /api/stripe/webhook is the only writer of accruals.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'gone', detail: 'replaced by the payout rail' },
+    { status: 410 },
+  );
 }
