@@ -64,18 +64,21 @@ INSERT INTO t_ids VALUES
   ('e2',   '33333333-3333-4333-8333-333333333333'),
   ('inel', '44444444-4444-4444-8444-444444444444');
 
-INSERT INTO agents (id, name, status, is_staff, tier,
+-- email is NOT NULL UNIQUE in production (schema readout Oct 11), so every fixture
+-- agent carries one. Found by the first run against railtest: the insert failed 23502
+-- without it.
+INSERT INTO agents (id, name, email, status, is_staff, tier,
                     stripe_connect_account_id, connect_payouts_enabled,
                     connect_details_submitted, connect_livemode)
 VALUES
-  ((SELECT v FROM t_ids WHERE k='src'),  'SELFTEST_SRC',  'active', false, 'worker_bee',
-   NULL, false, false, NULL),
-  ((SELECT v FROM t_ids WHERE k='e1'),   'SELFTEST_E1',   'active', false, 'worker_bee',
-   'acct_selftest_e1', true,  true,  false),
-  ((SELECT v FROM t_ids WHERE k='e2'),   'SELFTEST_E2',   'first_flight', false, 'worker_bee',
-   'acct_selftest_e2', true,  true,  false),
-  ((SELECT v FROM t_ids WHERE k='inel'), 'SELFTEST_INEL', 'active', false, 'worker_bee',
-   NULL, false, false, NULL);
+  ((SELECT v FROM t_ids WHERE k='src'),  'SELFTEST_SRC',  'selftest_src@example.test',
+   'active', false, 'worker_bee', NULL, false, false, NULL),
+  ((SELECT v FROM t_ids WHERE k='e1'),   'SELFTEST_E1',   'selftest_e1@example.test',
+   'active', false, 'worker_bee', 'acct_selftest_e1', true,  true,  false),
+  ((SELECT v FROM t_ids WHERE k='e2'),   'SELFTEST_E2',   'selftest_e2@example.test',
+   'first_flight', false, 'worker_bee', 'acct_selftest_e2', true,  true,  false),
+  ((SELECT v FROM t_ids WHERE k='inel'), 'SELFTEST_INEL', 'selftest_inel@example.test',
+   'active', false, 'worker_bee', NULL, false, false, NULL);
 
 DO $outer$
 DECLARE
@@ -128,102 +131,136 @@ BEGIN
 END $outer$;
 
 -- ── rail_accrue · every malformed p_rows case in the contract raises 22023 ───
+-- Each case builds a COMPLETE rail_accrue(...) statement through pg_temp.accrue_sql,
+-- which owns the closing parenthesis. The first version of this block pasted a prefix
+-- and let each case close its own parens; half of them miscounted and raised 42601
+-- (syntax error) instead of the contract's 22023, and expect_raise correctly reported
+-- that as a failure rather than a pass. Found by the first run against railtest.
+CREATE FUNCTION pg_temp.accrue_sql(p_rows_expr text, p_cents text DEFAULT '1000',
+                                   p_ref text DEFAULT NULL, p_month text DEFAULT NULL)
+RETURNS text LANGUAGE sql AS $acc$
+  SELECT format(
+    'SELECT rail_accrue(%L, %L::uuid, %s, %L::date, false, %s)',
+    COALESCE(p_ref, 'in_bad_' || md5(random()::text)),
+    '11111111-1111-4111-8111-111111111111',
+    p_cents,
+    COALESCE(p_month, date_trunc('month', (now() AT TIME ZONE 'utc'))::date::text),
+    p_rows_expr);
+$acc$;
+
 DO $outer$
 DECLARE
-  v_src  uuid := (SELECT v FROM t_ids WHERE k='src');
-  v_e1   uuid := (SELECT v FROM t_ids WHERE k='e1');
-  v_e2   uuid := (SELECT v FROM t_ids WHERE k='e2');
-  v_m    text := quote_literal(date_trunc('month', (now() AT TIME ZONE 'utc'))::date);
-  v_pre  text;
+  v_src text := '11111111-1111-4111-8111-111111111111';
+  v_e1  text := '22222222-2222-4222-8222-222222222222';
+  v_e2  text := '33333333-3333-4333-8333-333333333333';
 BEGIN
-  RAISE NOTICE '── rail_accrue · the input contract (every case raises 22023) ──';
-  v_pre := 'SELECT rail_accrue(''in_bad_'' || md5(random()::text), '
-           || quote_literal(v_src) || '::uuid, 1000, ' || v_m || '::date, false, ';
+  RAISE NOTICE '-- rail_accrue . the input contract (every case raises 22023) --';
 
   -- p_rows is not an array
-  PERFORM pg_temp.expect_raise(v_pre || '''{"a":1}''::jsonb)', '22023', 'p_rows is an object, not an array');
-  PERFORM pg_temp.expect_raise(v_pre || '''"x"''::jsonb)',     '22023', 'p_rows is a string');
-  PERFORM pg_temp.expect_raise(v_pre || '''7''::jsonb)',       '22023', 'p_rows is a number');
-  PERFORM pg_temp.expect_raise(v_pre || 'NULL::jsonb)',        '22023', 'p_rows is NULL');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''{"a":1}''::jsonb'), '22023', 'p_rows is an object, not an array');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''"x"''::jsonb'),     '22023', 'p_rows is a string');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''7''::jsonb'),       '22023', 'p_rows is a number');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''true''::jsonb'),    '22023', 'p_rows is a boolean');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('NULL::jsonb'),        '22023', 'p_rows is NULL');
 
   -- more than 2 elements
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(
-      jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200),
-      jsonb_build_object(''earning_agent_id'', %L, ''level'', 2, ''rate_bps'', 1000, ''amount_cents'', 100),
-      jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200)))',
-      v_e1::text, v_e2::text, v_e1::text), '22023', 'p_rows has 3 elements');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(
+       jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200),
+       jsonb_build_object(''earning_agent_id'', %L, ''level'', 2, ''rate_bps'', 1000, ''amount_cents'', 100),
+       jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1, v_e2, v_e1)), '22023', 'p_rows has 3 elements');
 
   -- an element is not an object
-  PERFORM pg_temp.expect_raise(v_pre || '''[1]''::jsonb)', '22023', 'element is a number');
-  PERFORM pg_temp.expect_raise(v_pre || '''["x"]''::jsonb)', '22023', 'element is a string');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[1]''::jsonb'),    '22023', 'element is a number');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''["x"]''::jsonb'),  '22023', 'element is a string');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[[]]''::jsonb'),   '22023', 'element is an array');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[null]''::jsonb'), '22023', 'element is null');
 
   -- a key is missing
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000))', v_e1::text),
-      '22023', 'key missing (no amount_cents)');
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))'),
-      '22023', 'key missing (no earning_agent_id)');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000))',
+    v_e1)), '22023', 'key missing (no amount_cents)');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(
+    'jsonb_build_array(jsonb_build_object(''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))'),
+    '22023', 'key missing (no earning_agent_id)');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1)), '22023', 'key missing (no level)');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''amount_cents'', 200))',
+    v_e1)), '22023', 'key missing (no rate_bps)');
 
   -- an extra key
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200,
-      ''note'', ''hello''))', v_e1::text), '22023', 'extra key');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000,
+       ''amount_cents'', 200, ''note'', ''hello''))', v_e1)), '22023', 'extra key');
 
-  -- wrong type
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', ''1'', ''rate_bps'', 2000, ''amount_cents'', 200))', v_e1::text),
-      '22023', 'level is a string, not a number');
-  PERFORM pg_temp.expect_raise(v_pre || 'jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', 42, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))',
-      '22023', 'earning_agent_id is a number');
-  PERFORM pg_temp.expect_raise(v_pre || 'jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', ''not-a-uuid'', ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))',
-      '22023', 'earning_agent_id is not a uuid');
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1.5, ''rate_bps'', 2000, ''amount_cents'', 200))', v_e1::text),
-      '22023', 'level is fractional');
+  -- wrong JSON type
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', ''1'', ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1)), '22023', 'level is a string, not a number');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', 42, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))'),
+    '22023', 'earning_agent_id is a number');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', ''not-a-uuid'', ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))'),
+    '22023', 'earning_agent_id is not a uuid');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1.5, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1)), '22023', 'level is fractional');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200.5))',
+    v_e1)), '22023', 'amount_cents is fractional');
 
   -- a level repeats
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(
-      jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200),
-      jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200)))',
-      v_e1::text, v_e2::text), '22023', 'level 1 repeats');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(
+       jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200),
+       jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1, v_e2)), '22023', 'level 1 repeats');
 
   -- level and rate do not pair
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 1000, ''amount_cents'', 100))', v_e1::text),
-      '22023', 'level 1 with rate 1000');
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 2, ''rate_bps'', 2000, ''amount_cents'', 200))', v_e1::text),
-      '22023', 'level 2 with rate 2000');
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 3, ''rate_bps'', 2000, ''amount_cents'', 200))', v_e1::text),
-      '22023', 'level 3 is not a level');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 1000, ''amount_cents'', 100))',
+    v_e1)), '22023', 'level 1 with rate 1000');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 2, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1)), '22023', 'level 2 with rate 2000');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 3, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_e1)), '22023', 'level 3 is not a level');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 1500, ''amount_cents'', 150))',
+    v_e1)), '22023', 'rate_bps 1500 is not a rate');
 
   -- A WRONG AMOUNT RAISES. 1000 cents at 2000 bps is 200, not 250.
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 250))', v_e1::text),
-      '22023', 'amount_cents 250 <> floor(1000 * 2000 / 10000) = 200');
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', -1))', v_e1::text),
-      '22023', 'amount_cents is negative');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 250))',
+    v_e1)), '22023', 'amount_cents 250 is not floor(1000 * 2000 / 10000) = 200');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 199))',
+    v_e1)), '22023', 'amount_cents 199 is one cent short');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', -1))',
+    v_e1)), '22023', 'amount_cents is negative');
 
   -- an earner equals the source agent
-  PERFORM pg_temp.expect_raise(v_pre || format('jsonb_build_array(jsonb_build_object(
-      ''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))', v_src::text),
-      '22023', 'earner is the source agent');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql(format(
+    'jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1, ''rate_bps'', 2000, ''amount_cents'', 200))',
+    v_src)), '22023', 'earner is the source agent');
 
   -- scalar inputs
-  PERFORM pg_temp.expect_raise(format('SELECT rail_accrue(''in_bad_src'', %L::uuid, 0, %s::date, false, ''[]''::jsonb)',
-      v_src::text, v_m), '22023', 'p_source_cents is 0');
-  PERFORM pg_temp.expect_raise(format('SELECT rail_accrue(''in_bad_src2'', %L::uuid, -5, %s::date, false, ''[]''::jsonb)',
-      v_src::text, v_m), '22023', 'p_source_cents is negative');
-  PERFORM pg_temp.expect_raise(format('SELECT rail_accrue('''', %L::uuid, 1000, %s::date, false, ''[]''::jsonb)',
-      v_src::text, v_m), '22023', 'p_invoice_ref is empty');
-  -- p_period_month must be the FIRST day of a month
-  PERFORM pg_temp.expect_raise(format('SELECT rail_accrue(''in_bad_month'', %L::uuid, 1000, ''2026-10-15''::date, false, ''[]''::jsonb)',
-      v_src::text), '22023', 'p_period_month is the 15th, not the 1st');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[]''::jsonb', '0'),
+    '22023', 'p_source_cents is 0');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[]''::jsonb', '-5'),
+    '22023', 'p_source_cents is negative');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[]''::jsonb', '1000', ''),
+    '22023', 'p_invoice_ref is empty');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[]''::jsonb', '1000', '   '),
+    '22023', 'p_invoice_ref is whitespace');
+  PERFORM pg_temp.expect_raise(pg_temp.accrue_sql('''[]''::jsonb', '1000', NULL, '2026-10-15'),
+    '22023', 'p_period_month is the 15th, not the 1st');
 END $outer$;
 
 -- ── the CHECK constraints reject bad rows directly ──────────────────────────

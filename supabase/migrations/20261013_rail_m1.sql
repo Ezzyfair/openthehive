@@ -454,16 +454,23 @@ BEGIN
           OR (v_agent.status IN ('active','first_flight')
               AND v_agent.tier IS DISTINCT FROM 'scout'))  THEN RETURN; END IF;
 
-  -- (3) that agent's pending rows, before the cutoff, in this mode
-  SELECT array_agg(id), COALESCE(sum(amount_cents), 0)
+  -- (3) that agent's pending rows, before the cutoff, in this mode.
+  --
+  -- EVERY column reference here is QUALIFIED. The RETURNS TABLE above makes
+  -- payout_id, amount_cents and destination_account into PL/pgSQL variables, and
+  -- referral_earnings has columns called payout_id and amount_cents, so an unqualified
+  -- `amount_cents` is ambiguous and PostgreSQL refuses the query at RUN TIME, not at
+  -- CREATE FUNCTION time. The first run against a scratch database found this on the
+  -- first eligible agent; a parser-free review would not have.
+  SELECT array_agg(claimed.id), COALESCE(sum(claimed.amount_cents), 0)
     INTO v_ids, v_total
     FROM (
-      SELECT id, amount_cents
-        FROM referral_earnings
-       WHERE earning_agent_id = p_agent
-         AND status = 'pending'
-         AND created_at < p_cutoff
-         AND livemode = p_livemode
+      SELECT re.id, re.amount_cents
+        FROM referral_earnings re
+       WHERE re.earning_agent_id = p_agent
+         AND re.status = 'pending'
+         AND re.created_at < p_cutoff
+         AND re.livemode = p_livemode
          FOR UPDATE SKIP LOCKED
     ) AS claimed;
 
@@ -484,10 +491,11 @@ BEGIN
     RETURN;
   END IF;
 
-  -- (6) claim the rows
-  UPDATE referral_earnings
+  -- (6) claim the rows. The SET target is unambiguously a column; the WHERE is
+  -- qualified for the same reason as above.
+  UPDATE referral_earnings re
      SET status = 'in_transit', payout_id = v_payout
-   WHERE id = ANY (v_ids);
+   WHERE re.id = ANY (v_ids);
 
   RETURN QUERY SELECT v_payout, v_total, v_agent.stripe_connect_account_id;
 END;
@@ -547,18 +555,18 @@ BEGIN
        SET status = 'paid', paid_at = now(), stripe_transfer_id = p_transfer_id,
            updated_at = now()
      WHERE id = p_payout;
-    UPDATE referral_earnings
+    UPDATE referral_earnings re
        SET status = 'paid', paid_at = now()
-     WHERE payout_id = p_payout;
+     WHERE re.payout_id = p_payout;
   ELSE
     UPDATE payouts
        SET status = 'failed', failure_code = p_failure_code, updated_at = now()
      WHERE id = p_payout;
     -- rows go back to pending so the next run can retry them; payout_id is cleared,
     -- which the payout_link CHECK requires for a pending row.
-    UPDATE referral_earnings
+    UPDATE referral_earnings re
        SET status = 'pending', payout_id = NULL
-     WHERE payout_id = p_payout;
+     WHERE re.payout_id = p_payout;
   END IF;
 END;
 $fn$;
