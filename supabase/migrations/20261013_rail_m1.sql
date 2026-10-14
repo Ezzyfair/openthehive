@@ -123,9 +123,9 @@ ALTER TABLE referral_earnings
   ALTER COLUMN level               SET NOT NULL,
   ALTER COLUMN status              SET NOT NULL,
   -- F5 · created_at is the cutoff rail_open_payout filters on (created_at < p_cutoff).
-  -- A NULL there makes the row invisible to every payout run forever, silently. It has
-  -- a DEFAULT now(), so NOT NULL only closes the case where a caller passes NULL
-  -- explicitly.
+  -- A NULL there makes the row invisible to every payout run from then on, silently.
+  -- The column has a DEFAULT now(), so NOT NULL only closes the case where a caller
+  -- passes NULL explicitly.
   ALTER COLUMN created_at          SET NOT NULL;
 
 -- 'in_…' for invoices, 'pi_…' for one-time payments.
