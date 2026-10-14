@@ -71,6 +71,10 @@ CREATE TABLE rail_legacy_rows (
 );
 ALTER TABLE rail_legacy_rows ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON rail_legacy_rows FROM anon, authenticated;
+-- F3 · the IDENTITY SEQUENCE too. REVOKE on a table does not reach the sequence behind
+-- its GENERATED ALWAYS AS IDENTITY column, and USAGE on a sequence lets a role call
+-- nextval and currval — enough to read how many rows have been archived and to burn ids.
+REVOKE ALL ON SEQUENCE rail_legacy_rows_id_seq FROM anon, authenticated;
 
 -- The guard aborts M1, changing nothing, if the ledger is not exactly the four rows
 -- measured on Oct 11. A fifth row means the measurement is stale and a human must look.
@@ -117,7 +121,12 @@ ALTER TABLE referral_earnings
   ALTER COLUMN earning_agent_id    SET NOT NULL,
   ALTER COLUMN source_agent_id     SET NOT NULL,
   ALTER COLUMN level               SET NOT NULL,
-  ALTER COLUMN status              SET NOT NULL;
+  ALTER COLUMN status              SET NOT NULL,
+  -- F5 · created_at is the cutoff rail_open_payout filters on (created_at < p_cutoff).
+  -- A NULL there makes the row invisible to every payout run forever, silently. It has
+  -- a DEFAULT now(), so NOT NULL only closes the case where a caller passes NULL
+  -- explicitly.
+  ALTER COLUMN created_at          SET NOT NULL;
 
 -- 'in_…' for invoices, 'pi_…' for one-time payments.
 COMMENT ON COLUMN referral_earnings.stripe_invoice_ref IS
@@ -145,6 +154,14 @@ ALTER TABLE referral_earnings
 -- most one L1 row and one L2 row, whatever is delivered and however often (closes D3).
 COMMENT ON CONSTRAINT referral_earnings_invoice_level_uniq ON referral_earnings IS
   'Idempotency gate: one invoice yields at most one L1 and one L2 accrual (§4.2, closes D3).';
+
+-- F4 · the two indexes the rail actually reads by.
+--   (earning_agent_id, status) — rail_open_payout step (3) and every balance read.
+--   (payout_id)                — rail_close_payout updates every row of one payout, and
+--                                the FK to payouts has no index of its own, so a delete
+--                                or an update of a payout row would seq-scan the ledger.
+CREATE INDEX referral_earnings_earner_status_idx ON referral_earnings (earning_agent_id, status);
+CREATE INDEX referral_earnings_payout_idx        ON referral_earnings (payout_id);
 
 -- wallet_address is DROPPED: a copy of eth_wallet on a money row, meaningless under
 -- ruling 10. The legacy numeric columns (earned_amount, subscription_amount, percentage,
@@ -236,12 +253,31 @@ ALTER TABLE payout_notices ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- ── rail_accrue ─────────────────────────────────────────────────────────────
--- Writes the accrual rows and the hive_revenue row in ONE transaction with
--- ON CONFLICT DO NOTHING on both unique constraints. Returns the number of accrual rows
--- written: 0 on a replay.
+-- Returns the number of accrual rows written: 0 on a replay.
 --
 -- The input contract (§4.7, closes B3) is enforced here and not in TypeScript, because
 -- the database is the only place a check cannot be skipped by a second caller.
+--
+-- F1 · ONE INVOICE IS PROCESSED EXACTLY ONCE, AS A UNIT. The order below is the whole
+-- point and it is not interchangeable:
+--
+--   1  validate EVERY element of p_rows, writing nothing;
+--   2  INSERT the hive_revenue row with ON CONFLICT (stripe_invoice_ref) DO NOTHING —
+--      this row is THE CLAIM on the invoice;
+--   3  if that insert wrote nothing, the invoice was already processed: RETURN 0 and
+--      write no accrual at all;
+--   4  otherwise INSERT the accrual rows with a PLAIN INSERT, no ON CONFLICT.
+--
+-- The earlier version inserted each accrual with ON CONFLICT (stripe_invoice_ref, level)
+-- DO NOTHING and then conflicted the revenue row away. That silently merged two
+-- DIFFERENT chains for the same invoice: a replay naming a different earner at level 2
+-- would have added that row beside the first one, because (invoice, level) did not
+-- collide. The revenue row is now the gate, so a second delivery of the same invoice
+-- cannot add, change or re-rate a single accrual — whatever chain it carries.
+--
+-- A plain INSERT at step 4 is deliberate: having claimed the invoice, a unique violation
+-- on (stripe_invoice_ref, level) is no longer an expected replay but a real
+-- contradiction, and it must abort the transaction rather than be swallowed.
 CREATE FUNCTION rail_accrue(
   p_invoice_ref   text,
   p_source_agent  uuid,
@@ -264,6 +300,7 @@ DECLARE
   v_seen_levels integer[] := '{}';
   v_paid_cents  integer := 0;
   v_written     integer := 0;
+  v_claimed     boolean;
 BEGIN
   -- scalar inputs
   IF p_invoice_ref IS NULL OR btrim(p_invoice_ref) = '' THEN
@@ -353,21 +390,7 @@ BEGIN
       RAISE EXCEPTION 'rail_accrue: an earner may not be the source agent' USING ERRCODE = '22023';
     END IF;
 
-    INSERT INTO referral_earnings (
-      earning_agent_id, source_agent_id, level, status,
-      stripe_invoice_ref, amount_cents, source_amount_cents, rate_bps, period_month, livemode
-    ) VALUES (
-      v_earner, p_source_agent, v_level, 'pending',
-      p_invoice_ref, v_amount, p_source_cents, v_rate, p_period_month, p_livemode
-    )
-    ON CONFLICT (stripe_invoice_ref, level) DO NOTHING;
-
-    IF FOUND THEN
-      v_written := v_written + 1;
-    END IF;
-    -- The split is computed from the ACCEPTED amounts whether or not the row was new, so
-    -- a replay that writes nothing still computes the same revenue row and conflicts
-    -- away cleanly rather than inserting a different split.
+    -- STEP 1 ONLY VALIDATES. Nothing is written until the invoice is claimed below.
     v_paid_cents := v_paid_cents + v_amount;
   END LOOP;
 
@@ -376,13 +399,42 @@ BEGIN
       v_paid_cents, p_source_cents USING ERRCODE = '22023';
   END IF;
 
-  -- An empty array is VALID (no eligible chain) and writes only the revenue row.
+  -- ── step 2 · CLAIM THE INVOICE ────────────────────────────────────────────
+  -- An empty array is VALID (no eligible chain) and claims the invoice with a revenue
+  -- row carrying the whole amount as kept.
+  -- F2 · source_agent_id is written: the revenue row records WHOSE subscription produced
+  -- it, which is the only link from the colony's cut back to the paying member.
   INSERT INTO hive_revenue (
-    stripe_invoice_ref, source_amount_cents, referral_paid_cents, hive_kept_cents, livemode
+    stripe_invoice_ref, source_agent_id, source_amount_cents,
+    referral_paid_cents, hive_kept_cents, livemode
   ) VALUES (
-    p_invoice_ref, p_source_cents, v_paid_cents, p_source_cents - v_paid_cents, p_livemode
+    p_invoice_ref, p_source_agent, p_source_cents,
+    v_paid_cents, p_source_cents - v_paid_cents, p_livemode
   )
   ON CONFLICT (stripe_invoice_ref) DO NOTHING;
+
+  v_claimed := FOUND;
+
+  -- ── step 3 · a replay stops here, having written nothing ──────────────────
+  IF NOT v_claimed THEN
+    RETURN 0;
+  END IF;
+
+  -- ── step 4 · the accruals, PLAIN INSERT ───────────────────────────────────
+  -- Re-walks the array that step 1 already validated. No ON CONFLICT: the invoice is
+  -- ours, so a unique violation here is a contradiction and must abort.
+  FOR v_elem IN SELECT value FROM jsonb_array_elements(p_rows) LOOP
+    INSERT INTO referral_earnings (
+      earning_agent_id, source_agent_id, level, status,
+      stripe_invoice_ref, amount_cents, source_amount_cents, rate_bps, period_month, livemode
+    ) VALUES (
+      (v_elem->>'earning_agent_id')::uuid, p_source_agent,
+      (v_elem->>'level')::integer, 'pending',
+      p_invoice_ref, (v_elem->>'amount_cents')::integer, p_source_cents,
+      (v_elem->>'rate_bps')::integer, p_period_month, p_livemode
+    );
+    v_written := v_written + 1;
+  END LOOP;
 
   RETURN v_written;
 END;

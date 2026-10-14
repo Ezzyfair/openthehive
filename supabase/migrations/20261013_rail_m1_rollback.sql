@@ -86,6 +86,11 @@ ALTER TABLE hive_revenue
 -- ============================================================================
 -- 5 · referral_earnings (§4.2)
 -- ============================================================================
+-- F4 mirror · the two indexes M1 created. Dropped before the columns they index, since
+-- DROP COLUMN would take them anyway but an explicit drop keeps the undo readable.
+DROP INDEX IF EXISTS referral_earnings_earner_status_idx;
+DROP INDEX IF EXISTS referral_earnings_payout_idx;
+
 ALTER TABLE referral_earnings
   DROP CONSTRAINT IF EXISTS referral_earnings_paid_at_chk,
   DROP CONSTRAINT IF EXISTS referral_earnings_level_rate_chk,
@@ -103,7 +108,10 @@ ALTER TABLE referral_earnings
   ALTER COLUMN earning_agent_id DROP NOT NULL,
   ALTER COLUMN source_agent_id  DROP NOT NULL,
   ALTER COLUMN level            DROP NOT NULL,
-  ALTER COLUMN status           DROP NOT NULL;
+  ALTER COLUMN status           DROP NOT NULL,
+  -- F5 mirror · created_at was nullable before M1 (readout Oct 11: no NOT NULL beyond
+  -- id), so it goes back. The DEFAULT now() is untouched either way.
+  ALTER COLUMN created_at       DROP NOT NULL;
 
 ALTER TABLE referral_earnings
   DROP COLUMN IF EXISTS stripe_invoice_ref,
@@ -170,6 +178,9 @@ DROP TABLE IF EXISTS payouts;
 -- ============================================================================
 -- 8 · what is NOT restored, stated plainly
 -- ============================================================================
+-- The REVOKE on rail_legacy_rows_id_seq (F3) disappears with the sequence itself when
+-- DROP TABLE rail_legacy_rows runs above, so there is nothing to undo for it.
+--
 -- The REVOKEs from §4.6 are LEFT IN PLACE, deliberately. Less access is never a
 -- regression, the audit (RAIL-revoke-audit.txt, Oct 11) proved no code path depends on
 -- anon or authenticated reaching these tables, and re-granting TRUNCATE on the money
@@ -191,3 +202,8 @@ COMMIT;
 -- SELECT count(*) FROM information_schema.tables
 --   WHERE table_name IN ('payouts','payout_notices','rail_legacy_rows');     -- expect 0
 -- SELECT count(*) FROM pg_proc WHERE proname LIKE 'rail\_%';                 -- expect 0
+-- SELECT count(*) FROM pg_indexes WHERE tablename='referral_earnings'
+--   AND indexname IN ('referral_earnings_earner_status_idx',
+--                     'referral_earnings_payout_idx');                        -- expect 0
+-- SELECT is_nullable FROM information_schema.columns
+--   WHERE table_name='referral_earnings' AND column_name='created_at';        -- expect YES

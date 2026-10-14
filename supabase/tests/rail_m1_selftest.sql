@@ -481,6 +481,135 @@ BEGIN
     '23514', 'payouts CHECK rejects paid with no paid_at or transfer id');
 END $outer$;
 
+-- ── F1/F2/F4 · the invoice is processed once as a unit; the revenue row records
+--    the source; the indexes exist ─────────────────────────────────────────────
+DO $outer$
+DECLARE
+  v_src    uuid := (SELECT v FROM t_ids WHERE k='src');
+  v_e1     uuid := (SELECT v FROM t_ids WHERE k='e1');
+  v_e2     uuid := (SELECT v FROM t_ids WHERE k='e2');
+  v_inel   uuid := (SELECT v FROM t_ids WHERE k='inel');
+  v_month  date := date_trunc('month', (now() AT TIME ZONE 'utc'))::date;
+  v_n      integer;
+  v_cnt    bigint;
+  v_paid   integer;
+  v_kept   integer;
+  v_srcid  uuid;
+BEGIN
+  RAISE NOTICE '-- F1 . a replay with a DIFFERENT chain writes nothing --';
+
+  -- First delivery: L1 to E1 only. 1000 cents at 2000 bps = 200.
+  v_n := rail_accrue('in_unit_001', v_src, 1000, v_month, false, jsonb_build_array(
+    jsonb_build_object('earning_agent_id', v_e1::text, 'level', 1, 'rate_bps', 2000, 'amount_cents', 200)));
+  PERFORM pg_temp.expect_eq(v_n, 1, 'first delivery writes 1 accrual');
+
+  SELECT referral_paid_cents, hive_kept_cents, source_agent_id
+    INTO v_paid, v_kept, v_srcid
+    FROM hive_revenue WHERE stripe_invoice_ref = 'in_unit_001';
+  PERFORM pg_temp.expect_eq(v_paid, 200, 'revenue row referral_paid_cents after delivery 1');
+  PERFORM pg_temp.expect_eq(v_kept, 800, 'revenue row hive_kept_cents after delivery 1');
+
+  -- F2 · the revenue row carries the source agent
+  PERFORM pg_temp.expect_eq(v_srcid, v_src, 'F2: revenue row carries source_agent_id');
+
+  -- REPLAY WITH A DIFFERENT CHAIN. Same invoice, but now a level-2 row for a DIFFERENT
+  -- earner is added and the level-1 earner is changed. Under the old ON CONFLICT
+  -- (invoice, level) scheme the level-2 row did not collide and WOULD have been written,
+  -- silently merging two chains onto one invoice. It must now write nothing.
+  v_n := rail_accrue('in_unit_001', v_src, 1000, v_month, false, jsonb_build_array(
+    jsonb_build_object('earning_agent_id', v_e2::text,   'level', 1, 'rate_bps', 2000, 'amount_cents', 200),
+    jsonb_build_object('earning_agent_id', v_inel::text, 'level', 2, 'rate_bps', 1000, 'amount_cents', 100)));
+  PERFORM pg_temp.expect_eq(v_n, 0, 'F1: a replay with a DIFFERENT chain writes 0 rows');
+
+  SELECT count(*) INTO v_cnt FROM referral_earnings WHERE stripe_invoice_ref = 'in_unit_001';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F1: still exactly 1 accrual row, not 2');
+
+  SELECT count(*) INTO v_cnt FROM referral_earnings
+   WHERE stripe_invoice_ref = 'in_unit_001' AND earning_agent_id = v_e1;
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F1: the original earner is untouched');
+
+  SELECT count(*) INTO v_cnt FROM referral_earnings
+   WHERE stripe_invoice_ref = 'in_unit_001' AND level = 2;
+  PERFORM pg_temp.expect_eq(v_cnt, 0::bigint, 'F1: the replay''s level-2 row was NOT written');
+
+  SELECT count(*) INTO v_cnt FROM referral_earnings
+   WHERE stripe_invoice_ref = 'in_unit_001' AND earning_agent_id IN (v_e2, v_inel);
+  PERFORM pg_temp.expect_eq(v_cnt, 0::bigint, 'F1: neither replay earner got a row');
+
+  -- the revenue row is UNCHANGED by the replay
+  SELECT count(*) INTO v_cnt FROM hive_revenue WHERE stripe_invoice_ref = 'in_unit_001';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F1: still exactly 1 revenue row');
+  SELECT referral_paid_cents, hive_kept_cents INTO v_paid, v_kept
+    FROM hive_revenue WHERE stripe_invoice_ref = 'in_unit_001';
+  PERFORM pg_temp.expect_eq(v_paid, 200, 'F1: revenue referral_paid_cents UNCHANGED by the replay');
+  PERFORM pg_temp.expect_eq(v_kept, 800, 'F1: revenue hive_kept_cents UNCHANGED by the replay');
+
+  -- a replay with the SAME chain is also 0
+  v_n := rail_accrue('in_unit_001', v_src, 1000, v_month, false, jsonb_build_array(
+    jsonb_build_object('earning_agent_id', v_e1::text, 'level', 1, 'rate_bps', 2000, 'amount_cents', 200)));
+  PERFORM pg_temp.expect_eq(v_n, 0, 'F1: a replay with the SAME chain writes 0 rows');
+
+  -- a replay with a DIFFERENT AMOUNT for the same invoice: validation runs first, so a
+  -- wrong amount still raises rather than being silently ignored as a replay.
+  PERFORM pg_temp.expect_raise(format(
+    'SELECT rail_accrue(''in_unit_001'', %L::uuid, 1000, %L::date, false,
+       jsonb_build_array(jsonb_build_object(''earning_agent_id'', %L, ''level'', 1,
+         ''rate_bps'', 2000, ''amount_cents'', 999)))',
+    v_src::text, v_month::text, v_e1::text),
+    '22023', 'F1: validation precedes the claim, so a bad replay still raises 22023');
+
+  -- an empty chain claims the invoice with the whole amount kept, and F2 still applies
+  v_n := rail_accrue('in_unit_empty', v_src, 2500, v_month, false, '[]'::jsonb);
+  PERFORM pg_temp.expect_eq(v_n, 0, 'empty chain writes 0 accruals');
+  SELECT referral_paid_cents, hive_kept_cents, source_agent_id INTO v_paid, v_kept, v_srcid
+    FROM hive_revenue WHERE stripe_invoice_ref = 'in_unit_empty';
+  PERFORM pg_temp.expect_eq(v_paid, 0, 'empty chain: referral_paid_cents 0');
+  PERFORM pg_temp.expect_eq(v_kept, 2500, 'empty chain: the whole amount kept');
+  PERFORM pg_temp.expect_eq(v_srcid, v_src, 'F2: empty chain revenue row still carries source_agent_id');
+  -- and a replay of the empty chain is also a no-op
+  v_n := rail_accrue('in_unit_empty', v_src, 2500, v_month, false, '[]'::jsonb);
+  PERFORM pg_temp.expect_eq(v_n, 0, 'empty chain replay writes 0');
+  SELECT count(*) INTO v_cnt FROM hive_revenue WHERE stripe_invoice_ref = 'in_unit_empty';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'empty chain replay leaves 1 revenue row');
+END $outer$;
+
+-- ── F4 · the indexes exist · F5 · created_at is NOT NULL · F3 · the sequence ──
+DO $outer$
+DECLARE v_cnt bigint; v_nullable text;
+BEGIN
+  RAISE NOTICE '-- F3 / F4 / F5 . schema objects --';
+
+  SELECT count(*) INTO v_cnt FROM pg_indexes
+   WHERE tablename = 'referral_earnings'
+     AND indexname = 'referral_earnings_earner_status_idx';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F4: index on (earning_agent_id, status) exists');
+
+  SELECT count(*) INTO v_cnt FROM pg_indexes
+   WHERE tablename = 'referral_earnings' AND indexname = 'referral_earnings_payout_idx';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F4: index on (payout_id) exists');
+
+  -- the index really covers the two columns, in that order
+  SELECT count(*) INTO v_cnt FROM pg_indexes
+   WHERE indexname = 'referral_earnings_earner_status_idx'
+     AND indexdef LIKE '%(earning_agent_id, status)%';
+  PERFORM pg_temp.expect_eq(v_cnt, 1::bigint, 'F4: the composite index is (earning_agent_id, status)');
+
+  SELECT is_nullable INTO v_nullable FROM information_schema.columns
+   WHERE table_name = 'referral_earnings' AND column_name = 'created_at';
+  PERFORM pg_temp.expect_eq(v_nullable, 'NO', 'F5: created_at is NOT NULL');
+
+  -- F3 · anon and authenticated hold nothing on the archive sequence
+  PERFORM pg_temp.expect_eq(
+    has_sequence_privilege('anon', 'rail_legacy_rows_id_seq', 'USAGE'), false,
+    'F3: anon has no USAGE on rail_legacy_rows_id_seq');
+  PERFORM pg_temp.expect_eq(
+    has_sequence_privilege('anon', 'rail_legacy_rows_id_seq', 'SELECT'), false,
+    'F3: anon has no SELECT on rail_legacy_rows_id_seq');
+  PERFORM pg_temp.expect_eq(
+    has_sequence_privilege('authenticated', 'rail_legacy_rows_id_seq', 'USAGE'), false,
+    'F3: authenticated has no USAGE on rail_legacy_rows_id_seq');
+END $outer$;
+
 DO $$ BEGIN RAISE NOTICE '';
             RAISE NOTICE 'ALL ASSERTIONS PASSED';
             RAISE NOTICE ''; END $$;
