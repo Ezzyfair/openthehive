@@ -1,102 +1,41 @@
 export const dynamic = 'force-dynamic';
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextResponse } from 'next/server';
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string
-  );
+// ----------------------------------------------------------------------------
+// NIK-RAIL-000 — DEFUSED. Ruled by Francis Oct 12 (RAIL-DESIGN-v1.1 §15 row 0,
+// ruling R-G). Both handlers are gone; this file reaches no database, no Stripe,
+// and no credential.
+//
+// WHAT WAS HERE, and why it could not stay while the real rail is built:
+//   POST  authenticated on a Bearer HIVE_API_KEY, then swept every agent with a
+//         non-null eth_wallet and ran
+//           UPDATE referral_earnings SET status='paid', paid_at=now()
+//         for any agent whose pending total cleared $5 — marking money PAID with
+//         no transfer behind it. Its own closing note admitted the transfer was
+//         still pending an unbuilt crypto integration. A row marked paid that
+//         nobody paid is worse than no row at all, and that rail was never ours.
+//   GET   took the agent's API key in the QUERY STRING (?agent_key=), so the
+//         credential landed in every proxy log, browser history and referrer
+//         header between the caller and here. It is removed with the writer
+//         rather than kept, because a reader that teaches callers to put a key
+//         in a URL is a reader that has to be unlearned later.
+//
+// Both now answer 410 Gone with an identical body. 410 and not 404: the path
+// existed, the client is not wrong to remember it, and it will not come back in
+// this shape. Nothing is checked before the return — no auth, no database, no
+// Stripe — so a stale caller holding a real key cannot make this file do work,
+// and a 410 is not an oracle for whether the key is still valid.
+//
+// The replacement is the Stripe Connect rail (checklist C). /api/stripe/webhook
+// remains the ONLY writer of accruals; see lib/referral-engine.ts.
+// ----------------------------------------------------------------------------
+
+const GONE = { error: 'gone', detail: 'replaced by the payout rail' } as const;
+
+export async function GET() {
+  return NextResponse.json(GONE, { status: 410 });
 }
 
-// GET /api/payouts?agent_key=hive_xxx — check payout status
-export async function GET(req: NextRequest) {
-  const agentKey = req.nextUrl.searchParams.get('agent_key');
-  if (!agentKey) return NextResponse.json({ error: 'agent_key required' }, { status: 400 });
-
-  const supabase = getSupabase();
-  const { data: agent } = await supabase
-    .from('agents')
-    .select('id, name, eth_wallet')
-    .eq('agent_api_key', agentKey)
-    .single();
-
-  if (!agent) return NextResponse.json({ error: 'Invalid key' }, { status: 401 });
-
-  const { data: earnings } = await supabase
-    .from('referral_earnings')
-    .select('earned_amount, status, paid_at, level')
-    .eq('earning_agent_id', agent.id)
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  const pending = (earnings || []).filter(e => e.status === 'pending');
-  const pendingTotal = pending.reduce((sum, e) => sum + e.earned_amount, 0);
-
-  return NextResponse.json({
-    agent: agent.name,
-    wallet: agent.eth_wallet || null,
-    pending_amount: pendingTotal.toFixed(2),
-    ready: pendingTotal >= 5.00,
-    message: pendingTotal >= 5.00
-      ? 'Payout ready. Processed on the 1st of each month.'
-      : `$${(5.00 - pendingTotal).toFixed(2)} more needed to reach $5 minimum.`,
-  });
-}
-
-// POST /api/payouts/process — monthly cron job processes all pending payouts
-export async function POST(req: NextRequest) {
-  // Verify this is called by our cron (internal only)
-  const auth = req.headers.get('authorization');
-  if (auth !== `Bearer ${process.env.HIVE_API_KEY}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const supabase = getSupabase();
-
-  // Find all agents with $5+ pending earnings and a wallet set
-  const { data: agents } = await supabase
-    .from('agents')
-    .select('id, name, eth_wallet')
-    .not('eth_wallet', 'is', null);
-
-  if (!agents) return NextResponse.json({ processed: 0 });
-
-  const payouts = [];
-
-  for (const agent of agents) {
-    const { data: pending } = await supabase
-      .from('referral_earnings')
-      .select('id, earned_amount')
-      .eq('earning_agent_id', agent.id)
-      .eq('status', 'pending');
-
-    if (!pending || pending.length === 0) continue;
-
-    const total = pending.reduce((sum, e) => sum + e.earned_amount, 0);
-    if (total < 5.00) continue;
-
-    // Mark as paid
-    const ids = pending.map(e => e.id);
-    await supabase
-      .from('referral_earnings')
-      .update({ status: 'paid', paid_at: new Date().toISOString() })
-      .in('id', ids);
-
-    payouts.push({
-      agent: agent.name,
-      wallet: agent.eth_wallet,
-      amount: total.toFixed(2),
-    });
-
-    // TODO: Trigger actual Strike/ETH payment here
-    // For now records the payout — manual processing until Strike API integrated
-  }
-
-  return NextResponse.json({
-    success: true,
-    processed: payouts.length,
-    payouts,
-    note: 'Payouts marked as paid. Actual transfer via Strike/ETH pending API integration.',
-  });
+export async function POST() {
+  return NextResponse.json(GONE, { status: 410 });
 }

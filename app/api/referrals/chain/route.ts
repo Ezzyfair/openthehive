@@ -1,10 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import {
-  recordSubscriptionEarnings,
-  buildReferralChain,
-} from '@/lib/referral-engine';
+import { buildReferralChain } from '@/lib/referral-engine';
 
 function getSupabase() {
   return createClient(
@@ -13,7 +10,8 @@ function getSupabase() {
   );
 }
 
-const DEFAULT_SUBSCRIPTION_AMOUNT = 10.00; // Worker Bee monthly fallback for backward compat
+// DEFAULT_SUBSCRIPTION_AMOUNT went with the defused POST (NIK-RAIL-000): a default
+// amount is exactly what let a cascade be minted without an invoice.
 const MIN_PAYOUT_USD = 5.00;
 
 /**
@@ -69,82 +67,32 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * POST /api/referrals/chain
+ * POST /api/referrals/chain — NIK-RAIL-000 DEFUSED.
+ * Ruled by Francis Oct 12 (RAIL-DESIGN-v1.1 §15 row 0, ruling R-G).
  *
- * Body: { action, agent_id, subscription_month?, amount?, api_key }
+ * BOTH actions this method carried wrote money, so the whole method is gone — and the
+ * api_key check and the service-role client went with it, because rule 1 is "no auth
+ * check before it, no database call": a 410 that first validates a key is an oracle for
+ * whether that key is still live.
  *
- * action='process_payment' — triggers cascade for one payment.
- *   Required: agent_id, api_key
- *   Optional: subscription_month (defaults to current YYYY-MM-01),
- *             amount (defaults to $10 Worker Bee)
+ *   action='process_payment' — called recordSubscriptionEarnings(), CREATING accruals
+ *     in referral_earnings and hive_revenue. Amount DEFAULTED to $10 and the month
+ *     defaulted to now, so a caller holding the key could mint a cascade for any agent
+ *     id with two fields and no invoice behind it. The Stripe webhook does this
+ *     properly, keyed to a real invoice (app/api/stripe/webhook/route.ts:170).
  *
- * action='run_monthly_payouts' — sweeps pending earnings, marks ready_for_payout.
- *   Required: api_key
+ *   action='run_monthly_payouts' — swept every pending row and ran
+ *     UPDATE referral_earnings SET status='ready_for_payout' for any agent over $5
+ *     WITH A NON-NULL eth_wallet, i.e. it gated real money on a crypto column that the
+ *     Stripe Connect rail does not use. Its one caller was the monthly cron at
+ *     /api/payouts/monthly, whose vercel.json entry is removed in this commit.
+ *
+ * The GET handlers above are untouched: they read, they take no credential from the
+ * URL, and the chain view is still the honest answer to "who is in my chain".
  */
-export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { action, agent_id, subscription_month, amount, api_key } = body;
-
-    if (api_key !== process.env.HIVE_API_KEY) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const supabase = getSupabase();
-
-    if (action === 'process_payment') {
-      if (!agent_id) {
-        return NextResponse.json({ error: 'agent_id required' }, { status: 400 });
-      }
-      const month = subscription_month || new Date().toISOString().slice(0, 7) + '-01';
-      const amt = typeof amount === 'number' ? amount : DEFAULT_SUBSCRIPTION_AMOUNT;
-      const result = await recordSubscriptionEarnings(agent_id, amt, month, supabase);
-      return NextResponse.json({ success: true, ...result });
-    }
-
-    if (action === 'run_monthly_payouts') {
-      const { data: pendingEarnings } = await supabase
-        .from('referral_earnings')
-        .select('earning_agent_id, earned_amount')
-        .eq('status', 'pending');
-
-      if (!pendingEarnings) return NextResponse.json({ processed: 0 });
-
-      const agentTotals: Record<string, number> = {};
-      pendingEarnings.forEach((e: any) => {
-        agentTotals[e.earning_agent_id] = (agentTotals[e.earning_agent_id] || 0) + e.earned_amount;
-      });
-
-      let processed = 0;
-      const payouts = [];
-
-      for (const [agentId, total] of Object.entries(agentTotals)) {
-        if (total >= MIN_PAYOUT_USD) {
-          const { data: agent } = await supabase
-            .from('agents')
-            .select('name, eth_wallet')
-            .eq('id', agentId)
-            .single();
-
-          if (agent?.eth_wallet) {
-            await supabase
-              .from('referral_earnings')
-              .update({ status: 'ready_for_payout' })
-              .eq('earning_agent_id', agentId)
-              .eq('status', 'pending');
-
-            payouts.push({ agent: agent.name, wallet: agent.eth_wallet, amount: total });
-            processed++;
-          }
-        }
-      }
-
-      return NextResponse.json({ success: true, processed, payouts });
-    }
-
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
+export async function POST() {
+  return NextResponse.json(
+    { error: 'gone', detail: 'replaced by the payout rail' },
+    { status: 410 },
+  );
 }
