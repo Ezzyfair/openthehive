@@ -1,18 +1,23 @@
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// §11 · the no-cache posture, the same four every bee route declares. A memoized
+// balance read on a money route is the FIND-POLL-CACHE bug with money attached:
+// railAdmin()'s cache:'no-store' is the first belt, these are the second.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 import { NextRequest, NextResponse } from 'next/server';
+import { railStripe } from '@/lib/rail/stripe';
+import { railAdmin } from '@/lib/rail/db';
 import Stripe from 'stripe';
-import { createClient } from '@supabase/supabase-js';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { canonicalTier } from '@/lib/tier';
 import { recordSubscriptionEarnings } from '@/lib/referral-engine';
 import { sendEmail } from '@/lib/mail/sendEmail';
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string,
-  );
-}
+// §11 · the money-path client. railAdmin() is service role with
+// cache:'no-store' at the request level and persistSession:false; a bare
+// Supabase constructor in this tree now fails scripts/check-rail-routes.mjs.
+const getSupabase = railAdmin;
 
 const SOUL_TO_STAFF: Record<string, string> = {
   'The Scholar': 'TESSICA', 'The Operator': 'ATLAS', 'The Muse': 'BEATRIX',
@@ -189,7 +194,7 @@ export async function POST(req: NextRequest) {
   // Lazy init: Stripe client constructed per-request, not at module load.
   // Matches the portal/route.ts pattern. Lets local builds and Vercel previews compile
   // without STRIPE_SECRET_KEY in the build environment.
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+  const stripe = railStripe();
 
   const body = await req.text();
   const sig = req.headers.get('stripe-signature');

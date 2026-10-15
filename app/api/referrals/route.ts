@@ -1,14 +1,18 @@
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// §11 · the no-cache posture, the same four every bee route declares. A memoized
+// balance read on a money route is the FIND-POLL-CACHE bug with money attached:
+// railAdmin()'s cache:'no-store' is the first belt, these are the second.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { railAdmin } from '@/lib/rail/db';
 import { getAgentEarnings } from '@/lib/referral-engine';
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string
-  );
-}
+// §11 · the money-path client. railAdmin() is service role with
+// cache:'no-store' at the request level and persistSession:false; a bare
+// Supabase constructor in this tree now fails scripts/check-rail-routes.mjs.
+const getSupabase = railAdmin;
 
 // GET /api/referrals?agent_key=hive_xxx — get earnings summary
 export async function GET(req: NextRequest) {

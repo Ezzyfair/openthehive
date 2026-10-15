@@ -37,8 +37,9 @@ reopened here. Your job is to implement what is designed, exactly, and prove it.
      diff out — `git --no-pager diff > ~/Downloads/NIK-<ticket>-diff.txt` — then stop, and
      Francis carries it. Do not open the PR yourself. Those files are
      `app/api/stripe/**`, `app/api/payouts/**`, `app/api/referrals/**`,
-     `lib/referral-engine.ts`, any migration touching `agents`, `members`,
-     `referral_earnings`, `hive_revenue`, and `app/api/bee/**` (Antenna).
+     `app/api/member/payouts/**`, `lib/referral-engine.ts`, `lib/rail/**`, any
+     migration touching `agents`, `members`, `referral_earnings`, `hive_revenue`,
+     `payouts` or `payout_notices`, and `app/api/bee/**` (Antenna).
    - A branch is not `main`. Pushing a branch for a preview build is fine and needs no
      PASS; merging it is what the PASS is for.
 5. Never run a migration without its rollback file and Nikita's review.
