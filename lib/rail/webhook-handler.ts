@@ -98,6 +98,23 @@ async function createPersonalHoneycomb(supabase: any, agentId: string, agentName
 async function postWelcome(supabase: any, honeycombId: string, agentName: string, soul: string, staffName: string) {
   const { data: staff } = await supabase.from('agents').select('id').eq('name', staffName).single();
   if (!staff) return;
+  // F3 · IDEMPOTENT. This branch is NOT the claim, and everything after it can still
+  // fail: a 500 raised further down (the one-time accrual, say) releases the event
+  // claim, and Stripe's retry re-runs the WHOLE handler from the top. Without this
+  // check the bee collects one greeting per retry, each one also bumping
+  // message_count. One already-present message from this staff bee in this chamber
+  // is proof the greeting landed, so there is nothing left to do.
+  const { data: existingWelcome } = await supabase
+    .from('messages')
+    .select('id')
+    .eq('honeycomb_id', honeycombId)
+    .eq('agent_id', staff.id)
+    .limit(1)
+    .maybeSingle();
+  if (existingWelcome) {
+    console.log('welcome already posted, skipping', { honeycomb: honeycombId, staff: staff.id });
+    return;
+  }
   const base = WELCOMES[staffName] || WELCOMES.ESMERALDA;
   const msg = agentName + ', ' + base;
   await supabase.from('messages').insert({
@@ -153,7 +170,7 @@ export async function recordWebhookFailure(
  */
 async function alertQuarantine(
   supabase: any,
-  args: { event_id: string; event_type: string; session_id: string; received: string },
+  args: { event_id: string; event_type: string; session_id: string; received: string; reason: string },
 ) {
   const to = process.env.HIVE_ALERT_EMAIL;
   if (!to) {
@@ -162,18 +179,23 @@ async function alertQuarantine(
     });
     return;
   }
-  const subject = 'The Hive — Stripe webhook quarantined: unrecognised tier';
+  // F6 · the REASON, not a fixed string. Five different faults reach this function
+  // and four of them are not about a tier at all; a subject line that always said
+  // "unrecognised tier" sent a human looking at the wrong thing, and made the five
+  // alerts indistinguishable in an inbox. The reason is the same string written to
+  // stripe_webhook_failures.reason, so the email and the row name one fault.
+  const subject = 'The Hive — Stripe webhook quarantined: ' + args.reason;
   const html = [
     '<div style="font-family:Georgia,serif;max-width:640px;">',
     '<h2>Stripe webhook quarantined</h2>',
-    '<p>A checkout completed at Stripe that the colony could not classify. The payment is',
-    ' safe at Stripe. Nothing was written to members or agents, and no cascade fired.</p>',
+    '<p>An event arrived at Stripe that the colony could not finish. The payment is',
+    ' safe at Stripe. Nothing was written to members or agents, and nothing accrued.</p>',
     '<ul>',
+    '<li><b>reason</b>: ' + args.reason + '</li>',
     '<li><b>event id</b>: ' + args.event_id + '</li>',
     '<li><b>event type</b>: ' + args.event_type + '</li>',
-    '<li><b>stripe session</b>: ' + args.session_id + '</li>',
-    '<li><b>metadata.tier received</b>: ' + args.received + '</li>',
-    '<li><b>accepted</b>: worker, honey, queens</li>',
+    '<li><b>stripe session or invoice</b>: ' + args.session_id + '</li>',
+    '<li><b>what was received</b>: ' + args.received + '</li>',
     '</ul>',
     '<p>The event is claimed, so Stripe will not retry it. Resolve it by hand, then set',
     ' resolved_at. Find the row with:</p>',
@@ -245,6 +267,7 @@ async function failAfterClaim(
       event_type: event.type,
       session_id: '(none — failure after claim)',
       received: stage,
+      reason: 'claim_release_failed',
     });
   }
   return json({ error: 'webhook failed after claim' }, 500);
@@ -301,7 +324,7 @@ export async function handleStripeEvent(
   deps: HandlerDeps,
   event: Stripe.Event,
 ): Promise<HandlerResult> {
-  const { stripe, db: supabase } = deps;
+  const { stripe, db: supabase, now } = deps;
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
     const { tier, agentName, soul, agent_id: metaAgentId } = (session.metadata || {}) as any;
@@ -341,6 +364,7 @@ export async function handleStripeEvent(
         event_type: event.type,
         session_id: session.id,
         received,
+        reason: 'unrecognised_tier',
       });
       return json({ received: true, quarantined: true }, 200);
     }
@@ -426,7 +450,7 @@ export async function handleStripeEvent(
       }
       try {
         const outcome = await accrueForSource(
-          { stripe, db: supabase, now: () => new Date() },
+          { stripe, db: supabase, now },
           { ...resolved, mode: 'payment', sourceAgentId: agentRecord.id },
           chainFor,
         );
@@ -473,6 +497,7 @@ export async function handleStripeEvent(
       await alertQuarantine(supabase as any, {
         event_id: event.id, event_type: event.type,
         session_id: '(none — invoice event)', received: 'no invoice id on the payload',
+        reason: 'invoice_id_missing',
       });
       return json({ received: true, quarantined: true }, 200);
     }
@@ -492,6 +517,7 @@ export async function handleStripeEvent(
       await alertQuarantine(supabase as any, {
         event_id: event.id, event_type: event.type,
         session_id: resolved.ref, received: 'invoice has no customer',
+        reason: 'invoice_without_customer',
       });
       return json({ received: true, quarantined: true }, 200);
     }
@@ -513,7 +539,12 @@ export async function handleStripeEvent(
       // once checkout has landed. Older than that, it is not a race — quarantine it
       // with a row and an alert and answer 200, because a further retry of a
       // two-hour-old event will not conjure a member.
-      const ageMs = Date.now() - event.created * 1000;
+      // F6 · deps.now(), not Date.now(). The 30-minute window is the one piece of
+      // TIME-DEPENDENT logic in the handler, so the clock has to be the injected one:
+      // otherwise the self-test cannot put an event on either side of the boundary
+      // without sleeping, and the boundary is what decides between "release and let
+      // Stripe retry" and "quarantine for a human".
+      const ageMs = now().getTime() - event.created * 1000;
       if (ageMs < 30 * 60 * 1000) {
         return await failAfterClaim(supabase, event, 'member_missing_recent', {
           customer: resolved.customerId, age_ms: ageMs,
@@ -528,13 +559,14 @@ export async function handleStripeEvent(
         event_id: event.id, event_type: event.type,
         session_id: resolved.ref,
         received: 'no member for this Stripe customer, event older than 30 minutes',
+        reason: 'member_not_found',
       });
       return json({ received: true, quarantined: true }, 200);
     }
 
     try {
       const outcome = await accrueForSource(
-        { stripe, db: supabase, now: () => new Date() },
+        { stripe, db: supabase, now },
         { ...resolved, mode: 'subscription', sourceAgentId: member.agent_id },
         chainFor,
       );

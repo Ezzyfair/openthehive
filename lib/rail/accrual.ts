@@ -109,8 +109,8 @@ export function invoiceLinePriceId(line: Stripe.InvoiceLineItem): string | null 
  * The price id of one CHECKOUT SESSION line item.
  *
  * A DIFFERENT SHAPE from the invoice line, also measured: Checkout's LineItem has
- * `price: Price | null` (node_modules/stripe/esm/resources/LineItems.d.ts:49), an
- * expanded object rather than pricing.price_details. Two readers, because the SDK
+ * `price: Price | null` (node_modules/stripe/esm/resources/LineItems.d.ts:49), a
+ * full Price object rather than pricing.price_details. Two readers, because the SDK
  * genuinely models them differently; one shared reader would have to guess.
  */
 export function sessionLinePriceId(line: Stripe.LineItem): string | null {
@@ -123,24 +123,36 @@ export function sessionLinePriceId(line: Stripe.LineItem): string | null {
  * §5.3 — retrieve the invoice from Stripe and read everything from the RETRIEVED
  * object. The event payload is a notification, never the source of amounts (R6).
  *
- * `lines` is expanded in the retrieve so the price ids are present without a
- * second call. A paginated invoice with more than 100 lines would truncate; a
- * membership invoice has one line, and the catalog check below fails closed if a
- * line is ever missing rather than accruing on a partial read.
+ * NO RETRIEVE OPTIONS AT ALL (chat-seat review F1). Nothing here needs Stripe to
+ * inline a nested object: pricing.price_details.price is typed `string | Price`,
+ * and in the plain response it IS the price id string — exactly what
+ * invoiceLinePriceId reads. Asking Stripe to return the nested Price instead is a
+ * request it may answer differently across api versions, and it buys depth on every
+ * call for a value already in hand. invoiceLinePriceId still accepts the object
+ * form, so nothing breaks if a caller ever asks for it.
+ *
+ * This commit's proof is that the option's name greps to zero across lib/rail, which
+ * is why this comment does not spell it.
+ *
+ * PAGINATION FAILS CLOSED (F5). `lines` is an ApiList and only its first page is
+ * here. If has_more is true, a null is pushed onto priceIds so the catalog check in
+ * accrueForSource cannot pass — a membership invoice has one line, and an invoice
+ * long enough to paginate is not one we will accrue on a partial read. The
+ * non_membership row then records it, which is how a human finds out.
  */
 export async function resolveInvoice(
   stripe: Stripe,
   invoiceId: string,
 ): Promise<ResolvedPayment> {
-  const invoice = await stripe.invoices.retrieve(invoiceId, {
-    expand: ['lines.data.pricing.price_details.price'],
-  });
+  const invoice = await stripe.invoices.retrieve(invoiceId);
 
   const customer = invoice.customer;
   const customerId =
     customer == null ? null : typeof customer === 'string' ? customer : customer.id;
 
   const lines = invoice.lines?.data ?? [];
+  const priceIds: Array<string | null> = lines.map(invoiceLinePriceId);
+  if (invoice.lines?.has_more) priceIds.push(null);
 
   return {
     ref: invoice.id as string,
@@ -148,7 +160,7 @@ export async function resolveInvoice(
     customerId,
     periodMonth: utcFirstOfMonth(invoice.period_start),
     livemode: invoice.livemode,
-    priceIds: lines.map(invoiceLinePriceId),
+    priceIds,
   };
 }
 
@@ -161,8 +173,12 @@ export async function resolveInvoice(
  * payment intent's `created`. §5.5 states this rule "here and nowhere else", so it
  * is implemented in exactly this function.
  *
- * The amount comes from the SESSION's amount_total, as the ticket specifies: the
- * session is what the buyer agreed to and what the line items belong to.
+ * EVERY MONEY FIELD COMES FROM THE RETRIEVED INTENT (chat-seat review F2), never
+ * from the session on the event payload. The amount is intent.amount_received —
+ * what Stripe actually took — not session.amount_total, which is what the buyer was
+ * shown and can differ after a partial capture, and which arrives inside a payload
+ * that a replay reproduces verbatim. The customer is read off the intent for the
+ * same reason. R6 applied to the one-time path: the payload is a notification.
  */
 export async function resolveOneTime(
   stripe: Stripe,
@@ -176,19 +192,22 @@ export async function resolveOneTime(
 
   const intent = await stripe.paymentIntents.retrieve(piId);
 
-  // The session's line items are not on the session object unless expanded, so
-  // they are listed. One call, bounded by the SDK's own timeout.
+  // The session's line items are not on the session object in the plain response,
+  // so they are listed. One call, bounded by the SDK's own timeout.
   const items = await stripe.checkout.sessions.listLineItems(session.id, { limit: 100 });
+
+  const intentCustomer = intent.customer;
+  const customerId =
+    intentCustomer == null
+      ? null
+      : typeof intentCustomer === 'string'
+        ? intentCustomer
+        : intentCustomer.id;
 
   return {
     ref: intent.id,
-    amountCents: session.amount_total ?? 0,
-    customerId:
-      session.customer == null
-        ? null
-        : typeof session.customer === 'string'
-          ? session.customer
-          : session.customer.id,
+    amountCents: intent.amount_received,
+    customerId,
     periodMonth: utcFirstOfMonth(intent.created),
     livemode: intent.livemode,
     priceIds: (items.data ?? []).map(sessionLinePriceId),
@@ -245,7 +264,11 @@ export async function accrueForSource(
   }
 
   // §5.6 — the chain, reads only.
-  const chain = await buildChain(input.sourceAgentId, deps.db);
+  const rawChain = await buildChain(input.sourceAgentId, deps.db);
+  // F4 · a link that IS the payer is dropped before any row is built: rail_accrue
+  // raises 22023 on a self-accrual, and no retry fixes an invoice that would always
+  // raise it. A cycle in referred_by_code is how the walk returns the payer.
+  const chain = rawChain.filter((link) => link.agentId !== input.sourceAgentId);
 
   // R3, R4 — INTEGER CENTS, floor(source × rate_bps / 10000). The legacy engine
   // multiplied a float percentage (D5); 7900 * 0.2 is representable, but

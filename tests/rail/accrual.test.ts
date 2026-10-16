@@ -40,6 +40,7 @@ import {
   invoiceLinePriceId,
   sessionLinePriceId,
   accrueForSource,
+  resolveOneTime,
   type AccrualDb,
 } from '../../lib/rail/accrual';
 import {
@@ -88,7 +89,12 @@ function seed(): FakeDb {
  * Kept to the same five branches as app/api/stripe/webhook/route.ts so a drift
  * between them is visible in one diff.
  */
-async function deliver(db: FakeDb, stripe: any, event: any): Promise<HandlerResult> {
+async function deliver(
+  db: FakeDb,
+  stripe: any,
+  event: any,
+  now: () => Date = () => new Date(),
+): Promise<HandlerResult> {
   const claim = await claimEvent(db as unknown as AccrualDb, event);
   if (claim.kind === 'duplicate') {
     return { status: 200, body: { received: true, already_processed: true } };
@@ -101,7 +107,7 @@ async function deliver(db: FakeDb, stripe: any, event: any): Promise<HandlerResu
     return { status: 500, body: { error: 'event claim unavailable' } };
   }
   return await handleStripeEvent(
-    { stripe, db: db as unknown as AccrualDb, now: () => new Date() },
+    { stripe, db: db as unknown as AccrualDb, now },
     event,
   );
 }
@@ -491,6 +497,9 @@ test('(t) a one-time checkout accrues on the payment intent, with that intent\'s
   const stripe = new FakeStripe({
     paymentIntent: {
       id: 'pi_queens_1', livemode: false,
+      // amount_received and customer live on the INTENT since F2; this fixture
+      // carries them because that is now where resolveOneTime reads the money.
+      amount_received: 24900, customer: 'cus_test_1',
       created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
     },
     sessionLineItems: [sessionLine(QUEENS)],
@@ -543,4 +552,194 @@ test('(u) an unavailable claim fails closed: 500, a claim_failed row, and no wor
   assert.equal(res.status, 500);
   assert.equal(db.countRpc(), 0, 'failing open would double-pay');
   assert.equal(stripe.retrieveCalls.length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (v) F1 · the invoice retrieve passes NO options
+// ════════════════════════════════════════════════════════════════════════════
+test('(v) invoices.retrieve is called with the id alone — no second argument', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 200);
+  assert.equal(stripe.retrieveArgs.length, 1);
+  assert.equal(stripe.retrieveArgs[0].call, 'invoice:in_test_1');
+  assert.equal(stripe.retrieveArgs[0].params, undefined,
+    'no options object at all — the price id is already a string in the plain response');
+  // And it still read the price id, so dropping the options cost nothing.
+  const args: any = db.lastAccrual();
+  assert.deepEqual(args.p_rows.map((r: any) => r.amount_cents), [200, 100]);
+});
+
+test('(v2) the payment intent retrieve passes no options either', async () => {
+  const stripe = new FakeStripe({
+    paymentIntent: {
+      id: 'pi_1', livemode: false, amount_received: 24900, customer: 'cus_test_1',
+      created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
+    },
+    sessionLineItems: [sessionLine(QUEENS)],
+  });
+  await resolveOneTime(stripe as any, { id: 'cs_1', payment_intent: 'pi_1' } as any);
+  const pi = stripe.retrieveArgs.find((a) => a.call === 'pi:pi_1');
+  assert.ok(pi);
+  assert.equal(pi!.params, undefined);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (w) F2 · every money field of a one-time payment comes from the INTENT
+// ════════════════════════════════════════════════════════════════════════════
+test('(w) a one-time payment uses the intent\'s amount_received and ignores session.amount_total', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({
+    paymentIntent: {
+      id: 'pi_queens_2', livemode: false,
+      amount_received: 24900,            // what Stripe actually took
+      customer: 'cus_from_intent',
+      created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
+    },
+    sessionLineItems: [sessionLine(QUEENS)],
+  });
+  const session = {
+    id: 'cs_queens_2', mode: 'payment',
+    amount_total: 999900,                // deliberately wrong, and on the payload
+    customer: 'cus_test_1', customer_email: 'src@example.test',
+    payment_intent: 'pi_queens_2', subscription: null,
+    metadata: { tier: 'queens', agentName: 'Source', soul: 'The Operator', agent_id: 'ag_src' },
+  };
+
+  const res = await deliver(db, stripe, fakeEvent('checkout.session.completed', session));
+  assert.equal(res.status, 200);
+
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_source_cents, 24900, 'the intent won, not the payload');
+  assert.notEqual(args.p_source_cents, 999900);
+  assert.deepEqual(args.p_rows.map((r: any) => r.amount_cents), [4980, 2490]);
+
+  // And the customer id too: the intent's, not the session's.
+  const resolved = await resolveOneTime(stripe as any, session as any);
+  assert.equal(resolved.customerId, 'cus_from_intent');
+  assert.equal(resolved.amountCents, 24900);
+  assert.equal(resolved.ref, 'pi_queens_2');
+  assert.equal(resolved.periodMonth, '2026-10-01');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (x) F3 · the welcome is posted once, however many times the handler re-runs
+// ════════════════════════════════════════════════════════════════════════════
+test('(x) a second checkout.session.completed for the same bee inserts zero further messages', async () => {
+  const db = seed();
+  // The life coach for 'The Operator'. Without this row postWelcome returns early
+  // and the test would pass without proving anything.
+  db.rows.agents.push({ id: 'ag_atlas', name: 'ATLAS', referral_code: 'ATLAS', status: 'active' });
+  const stripe = new FakeStripe();
+  const session = {
+    id: 'cs_welcome_1', mode: 'subscription', customer: 'cus_test_1',
+    customer_email: 'src@example.test', subscription: 'sub_test_1',
+    metadata: { tier: 'worker', agentName: 'Source', soul: 'The Operator', agent_id: 'ag_src' },
+  };
+
+  const first = await deliver(db, stripe, fakeEvent('checkout.session.completed', session,
+    { id: 'evt_welcome_1' }));
+  assert.equal(first.status, 200);
+  assert.equal(db.rows.messages.length, 1, 'the greeting is posted on the first delivery');
+  assert.equal(db.rows.honeycombs.length, 1);
+  const countAfterFirst = db.rows.honeycombs[0].message_count;
+
+  // Stripe re-runs the whole handler after any 500 raised later in the branch.
+  const second = await deliver(db, stripe, fakeEvent('checkout.session.completed', session,
+    { id: 'evt_welcome_2' }));
+  assert.equal(second.status, 200);
+  assert.equal(db.rows.messages.length, 1, 'no second greeting');
+  assert.equal(db.rows.honeycombs.length, 1, 'no second chamber');
+  assert.equal(db.rows.honeycombs[0].message_count, countAfterFirst,
+    'message_count was not bumped again either');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (y) F4 · a chain link that is the payer never becomes a row
+// ════════════════════════════════════════════════════════════════════════════
+test('(y) a self-referencing chain link produces no accrual row (rail_accrue would raise 22023)', async () => {
+  const db = seed();
+  const outcome = await accrueForSource(
+    { stripe: {} as any, db: db as unknown as AccrualDb, now: () => new Date() },
+    { ref: 'ref_self_1', amountCents: 1000, periodMonth: '2026-10-01', livemode: false,
+      mode: 'subscription', priceIds: [WORKER], sourceAgentId: 'ag_src' },
+    async () => [{ agentId: 'ag_src', level: 1 }, { agentId: 'ag_one', level: 2 }],
+  );
+  assert.equal(outcome.kind, 'written');
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_rows.length, 1, 'the payer is gone, the real earner stays');
+  assert.deepEqual(args.p_rows, [
+    { earning_agent_id: 'ag_one', level: 2, rate_bps: 1000, amount_cents: 100 },
+  ]);
+});
+
+test('(y2) a cycle in referred_by_code accrues nothing but still claims the invoice', async () => {
+  const db = seed();
+  // ag_src's referrer code is its OWN code: the walk returns the payer at both levels.
+  db.rows.agents = db.rows.agents.map((a) =>
+    a.id === 'ag_src' ? { ...a, referred_by_code: 'SRC' } : a);
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 1, 'rail_accrue is still called: the revenue row is the claim');
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_rows.length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (z) F5 · a paginated line list fails closed
+// ════════════════════════════════════════════════════════════════════════════
+test('(z) has_more on the invoice lines yields non_membership, a failures row and no rpc', async () => {
+  const db = seed();
+  const inv = fakeInvoice({ amountPaid: 1000, priceIds: [WORKER], linesHasMore: true });
+  const stripe = new FakeStripe({ invoice: inv });
+
+  const res = await deliver(db, stripe, fakeEvent('invoice.payment_succeeded', inv));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 0, 'a partial read of the lines must not accrue');
+  const rows = db.failures('non_membership_payment');
+  assert.equal(rows.length, 1);
+  // The null is the recorded evidence that a page was missing.
+  assert.deepEqual(rows[0].detail.price_ids, [WORKER, null]);
+
+  // And the same invoice without has_more does accrue, so the flag is what refused it.
+  const db2 = seed();
+  const ok = fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] });
+  const res2 = await deliver(db2, new FakeStripe({ invoice: ok }),
+    fakeEvent('invoice.payment_succeeded', ok, { id: 'evt_haspage_2' }));
+  assert.equal(res2.status, 200);
+  assert.equal(db2.countRpc(), 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (aa) F6 · the 30-minute window is read from the injected clock
+// ════════════════════════════════════════════════════════════════════════════
+test('(aa) the member-race window uses deps.now(), not the process clock', async () => {
+  const db = seed();
+  db.rows.members = [];
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+  // The event was created SECONDS ago by the real clock. Only the injected clock,
+  // three hours ahead, can put it outside the window.
+  const event = invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }, { ageSeconds: 10 });
+  const threeHoursOn = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
+
+  const res = await deliver(db, stripe, event, threeHoursOn);
+
+  assert.equal(res.status, 200, 'outside the window: quarantine, not a retry');
+  assert.equal(res.body.quarantined, true);
+  const rows = db.failures('member_not_found');
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].detail.age_ms > 2 * 60 * 60 * 1000);
+
+  // The same event on the real clock is inside the window and is retried instead.
+  const db2 = seed();
+  db2.rows.members = [];
+  const inside = await deliver(db2, stripe,
+    invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }, { ageSeconds: 10 }));
+  assert.equal(inside.status, 500);
+  assert.equal(db2.failures('member_not_found').length, 0);
 });

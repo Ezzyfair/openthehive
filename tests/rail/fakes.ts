@@ -227,19 +227,26 @@ export interface FakeStripeOpts {
 
 export class FakeStripe {
   retrieveCalls: string[] = [];
+  /**
+   * Every argument each retrieve was called with. F1's assertion is about what was
+   * NOT passed, so the stub has to keep the whole call, not just the id.
+   */
+  retrieveArgs: Array<{ call: string; params: unknown }> = [];
   constructor(public opts: FakeStripeOpts = {}) {}
 
   invoices = {
-    retrieve: async (id: string, _params?: unknown) => {
+    retrieve: async (id: string, params?: unknown) => {
       this.retrieveCalls.push(`invoice:${id}`);
+      this.retrieveArgs.push({ call: `invoice:${id}`, params });
       if (this.opts.retrieveError) throw new Error(this.opts.retrieveError);
       return this.opts.invoice;
     },
   };
 
   paymentIntents = {
-    retrieve: async (id: string) => {
+    retrieve: async (id: string, params?: unknown) => {
       this.retrieveCalls.push(`pi:${id}`);
+      this.retrieveArgs.push({ call: `pi:${id}`, params });
       if (this.opts.retrieveError) throw new Error(this.opts.retrieveError);
       return this.opts.paymentIntent;
     },
@@ -266,7 +273,7 @@ export const invoiceLine = (priceId: string | null) => ({
   pricing: priceId === null ? null : { type: 'price_details', price_details: { price: priceId } },
 });
 
-/** A checkout LineItem, whose price is an expanded object — a different shape. */
+/** A checkout LineItem, whose price is a full Price object — a different shape. */
 export const sessionLine = (priceId: string | null) => ({
   price: priceId === null ? null : { id: priceId },
 });
@@ -278,6 +285,8 @@ export const fakeInvoice = (o: {
   periodStart?: number;
   livemode?: boolean;
   priceIds?: Array<string | null>;
+  /** F5 · the line list is paginated and this is only its first page. */
+  linesHasMore?: boolean;
 }) => ({
   id: o.id ?? 'in_test_1',
   amount_paid: o.amountPaid,
@@ -286,7 +295,10 @@ export const fakeInvoice = (o: {
   // in a negative-offset zone would answer September and the test would catch it.
   period_start: o.periodStart ?? Math.floor(Date.UTC(2026, 9, 1, 0, 30) / 1000),
   livemode: o.livemode ?? false,
-  lines: { data: (o.priceIds ?? ['price_worker_test']).map(invoiceLine) },
+  lines: {
+    data: (o.priceIds ?? ['price_worker_test']).map(invoiceLine),
+    has_more: o.linesHasMore ?? false,
+  },
 });
 
 export const fakeEvent = (
