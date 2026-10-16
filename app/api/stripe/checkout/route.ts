@@ -1,13 +1,19 @@
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// §11 · the no-cache posture, the same four every bee route declares. A memoized
+// balance read on a money route is the FIND-POLL-CACHE bug with money attached:
+// railAdmin()'s cache:'no-store' is the first belt, these are the second.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
+import { railStripe } from '@/lib/rail/stripe';
 
 export async function POST(req: NextRequest) {
   try {
     // Lazy init: Stripe client and price map constructed per-request, not at module load.
     // Matches the portal/route.ts pattern. Lets local builds and Vercel previews compile
     // without STRIPE_SECRET_KEY in the build environment.
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+    const stripe = railStripe();
     const PRICE_MAP: Record<string, string> = {
       worker: process.env.STRIPE_WORKER_BEE_PRICE_ID as string,
       honey: process.env.STRIPE_HONEY_MAKER_PRICE_ID as string,

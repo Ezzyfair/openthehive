@@ -1,4 +1,10 @@
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// §11 · the no-cache posture, the same four every bee route declares. A memoized
+// balance read on a money route is the FIND-POLL-CACHE bug with money attached:
+// railAdmin()'s cache:'no-store' is the first belt, these are the second.
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 import { NextResponse } from 'next/server';
 
 // ----------------------------------------------------------------------------
