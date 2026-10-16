@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
  * check before it, no database call": a 410 that first validates a key is an oracle for
  * whether that key is still live.
  *
- *   action='process_payment' — called recordSubscriptionEarnings(), CREATING accruals
+ *   action='process_payment' — called the legacy accrual writer, CREATING accruals
  *     in referral_earnings and hive_revenue. Amount DEFAULTED to $10 and the month
  *     defaulted to now, so a caller holding the key could mint a cascade for any agent
  *     id with two fields and no invoice behind it. The Stripe webhook does this

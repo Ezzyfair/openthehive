@@ -1,0 +1,34 @@
+{
+  "//": "NIK-RAIL-004 · the self-test build. Separate from the root tsconfig because",
+  "//2": "that one is noEmit with module esnext for Next.js; node --test needs real",
+  "//3": "emitted CommonJS it can require. Nothing here affects the app build.",
+  "//4": "rootDir is pinned so the emitted tree is .rail-test-dist/<repo path> whatever",
+  "//5": "the input set is: tests/rail/resolver.ts maps '@/x' to <dist>/x and depends on",
+  "//6": "that shape, and an inferred rootDir moves when the input set changes.",
+  "//7": "The 'stripe' path entry is MEASURED, not a preference. Under moduleResolution",
+  "//8": "'node' the package's \"exports\" map is ignored, so 'stripe' resolves to",
+  "//9": "cjs/stripe.cjs.node.d.ts, which declares only StripeConstructor and gives",
+  "//10": "'TS2694: Namespace StripeConstructor has no exported member Invoice' on every",
+  "//11": "Stripe.X type the rail uses. esm/stripe.esm.node.d.ts:333 is the declaration",
+  "//12": "carrying 'export declare namespace Stripe', which is the one the Next build",
+  "//13": "resolves through moduleResolution 'bundler'. Types only — nothing imports",
+  "//14": "stripe as a value here. 'dom' is in lib for lib/rail/db.ts's fetch types.",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "types": ["node"],
+    "baseUrl": "../..",
+    "rootDir": "../..",
+    "paths": {
+      "@/*": ["./*"],
+      "stripe": ["./node_modules/stripe/esm/stripe.esm.node.d.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "../../lib/rail/**/*.ts"]
+}

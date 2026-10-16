@@ -1,10 +1,16 @@
 /**
  * lib/referral-engine.ts — The Hive 2-level referral bonus engine
  *
- * Single source of truth for cascade calculations. Used by:
- *   - /api/referrals (GET dashboard, POST cascade trigger — legacy)
- *   - /api/referrals/chain (GET chain, POST process_payment + run_monthly_payouts)
- *   - /api/stripe/webhook (cascade trigger on paid invoice + one-time checkout)
+ * READ-ONLY SINCE NIK-RAIL-004. This module no longer writes anything: its one
+ * writer is deleted, and every accrual now goes through the rail_accrue database
+ * function, called once from lib/rail/accrual.ts. That is predicate R60, which
+ * scripts/check-rail-routes.mjs enforces — this file needed a printed exemption
+ * there until this commit and no longer does.
+ *
+ * Used by:
+ *   - /api/referrals (GET earnings dashboard)
+ *   - /api/referrals/chain (GET chain and GET ?action=earnings; its POST is 410)
+ *   - /api/stripe/webhook, through lib/rail/accrual.ts, for buildReferralChain only
  *
  * Bible v1.3 (Sept 6, 2026): the referral bonus is 2 levels — L1 20%, L2 10% — of every paid
  *   subscription, retention-linked both ways: the referred member must keep paying, and the
@@ -19,15 +25,6 @@
  *   Honey Maker annual = $79. Queen's Council lifetime = $249. Same 2-level
  *   distribution applies to all.
  */
-
-import { createClient } from '@supabase/supabase-js';
-
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL as string,
-    process.env.SUPABASE_SERVICE_ROLE_KEY as string
-  );
-}
 
 // Referral bonus rates by level (Bible v1.3, Sept 6 2026 — do not deepen)
 // Level 1 = the member who referred the payer = 20%
@@ -110,93 +107,22 @@ export async function buildReferralChain(newAgentId: string, supabase: any): Pro
 }
 
 /**
- * Calculate and record earnings for a subscription payment.
+ * THE LEGACY WRITER WAS DELETED HERE (NIK-RAIL-004). It is not named in this
+ * comment on purpose: the commit's proof is that its symbol greps to zero across
+ * app/ and lib/, and a comment spelling it would make that impossible to state.
  *
- * Idempotency: skipped if (source_agent_id, subscription_month) tuple already
- * has an earnings row. Prevents double-cascade on Stripe webhook retries.
- * For one-time tiers (QC lifetime, Honey Maker annual), subscription_month is
- * the calendar month the payment occurred — acceptable since duplicate one-time
- * payments in the same month for the same agent aren't expected.
+ * What it did, and why none of it survives: it inserted referral_earnings and
+ * hive_revenue rows directly; keyed idempotency on (source_agent_id,
+ * subscription_month) with a read-then-write race (D3); took the month from the
+ * server clock rather than the invoice (D4); computed amounts as floating-point
+ * dollars (D5); and ignored the returned error on both inserts (D7).
+ *
+ * Its replacement is the rail_accrue database function, called exactly once from
+ * lib/rail/accrual.ts: the invoice reference is the idempotency key, the month comes
+ * from the invoice, amounts are integer cents, and the RPC error is checked and
+ * surfaced so Stripe retries.
  */
-export async function recordSubscriptionEarnings(
-  subscribingAgentId: string,
-  subscriptionAmount: number, // e.g., 10.00 (Worker Bee), 79.00 (Honey Maker), 249.00 (QC)
-  subscriptionMonth: string,  // e.g., '2026-04-01'
-  supabase: any
-): Promise<{
-  totalPaidOut: number;
-  hiveKept: number;
-  chain: Array<{ name: string; level: number; amount: number }>;
-  skipped?: boolean;
-  reason?: string;
-}> {
-  // Idempotency: skip if cascade already fired for this agent in this month
-  const { data: existing } = await supabase
-    .from('referral_earnings')
-    .select('id')
-    .eq('source_agent_id', subscribingAgentId)
-    .eq('subscription_month', subscriptionMonth)
-    .limit(1);
 
-  if (existing && existing.length > 0) {
-    return {
-      totalPaidOut: 0,
-      hiveKept: 0,
-      chain: [],
-      skipped: true,
-      reason: 'duplicate_month',
-    };
-  }
-
-  const chain = await buildReferralChain(subscribingAgentId, supabase);
-
-  let totalPaidOut = 0;
-  const earnings = [];
-  const earningsRows = [];
-
-  for (const earner of chain) {
-    const earnedAmount = Math.round(subscriptionAmount * earner.percentage * 100) / 100;
-    totalPaidOut += earnedAmount;
-
-    earningsRows.push({
-      earning_agent_id: earner.agentId,
-      source_agent_id: subscribingAgentId,
-      subscription_month: subscriptionMonth,
-      level: earner.level,
-      percentage: Math.round(earner.percentage * 100), // 20 or 10, never 20.000000000000004
-      subscription_amount: subscriptionAmount,
-      earned_amount: earnedAmount,
-      status: 'pending',
-      wallet_address: earner.walletAddress,
-    });
-
-    earnings.push({
-      name: earner.agentName,
-      level: earner.level,
-      amount: earnedAmount,
-    });
-  }
-
-  if (earningsRows.length > 0) {
-    await supabase.from('referral_earnings').insert(earningsRows);
-  }
-
-  const hiveKept = Math.round((subscriptionAmount - totalPaidOut) * 100) / 100;
-
-  // Record hive revenue
-  await supabase.from('hive_revenue').insert({
-    source_agent_id: subscribingAgentId,
-    subscription_month: subscriptionMonth,
-    subscription_amount: subscriptionAmount,
-    referral_paid_out: totalPaidOut,
-    hive_kept: hiveKept,
-    chain_depth: chain.length ? Math.max(...chain.map((c) => c.level)) : 0, // deepest paying level
-  });
-
-  return { totalPaidOut, hiveKept, chain: earnings };
-}
-
-// Get total pending earnings for an agent
 export async function getAgentEarnings(agentId: string, supabase: any) {
   const { data: pending } = await supabase
     .from('referral_earnings')

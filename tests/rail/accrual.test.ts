@@ -1,0 +1,546 @@
+// tests/rail/accrual.test.ts
+// ----------------------------------------------------------------------------
+// THE HIVE · payout rail — the row 4 gate.
+// RAIL-DESIGN-v1.1 §15 row 4: "replay and concurrency self-test against the real
+// handler with stubbed Stripe". Ticket NIK-RAIL-004.
+//
+// Run:  npm run test:rail
+//   ==  npx tsc -p tests/rail/tsconfig.json --outDir .rail-test-dist \
+//       && node --test '.rail-test-dist/**/*.test.js'
+//
+// ONE DEVIATION FROM THE COMMAND AS WRITTEN, measured: `node --test .rail-test-dist/`
+// finds nothing. Node's test-file discovery skips dot-directories, so a directory
+// argument beginning with '.' is loaded as if it were a single test FILE and the run
+// dies with "Cannot find module .../.rail-test-dist" before any test executes
+// (node v22.22.2, proven in the packet). The glob names the files directly, which
+// works and keeps the output directory the ticket specified.
+//
+// WHAT IS REAL AND WHAT IS STUBBED, stated so the gate cannot be read as broader
+// than it is:
+//   REAL    — lib/rail/accrual.ts, lib/rail/webhook-handler.ts (claimEvent,
+//             handleStripeEvent, recordWebhookFailure), lib/rail/catalog.ts and
+//             lib/referral-engine.ts's buildReferralChain. The same functions the
+//             route calls, not a re-implementation.
+//   STUBBED — Stripe (three calls) and the database (the chain the handler uses).
+//   NOT COVERED — the signature verification and the raw-body read, which live in
+//             the route because only a route can do them, and rail_accrue itself,
+//             which was proven against a real PostgreSQL in NIK-RAIL-002. This
+//             file proves the TypeScript side calls it once, with integer cents,
+//             and never swallows its error.
+//
+// No network, no Supabase, no Stripe. HIVE_ALERT_EMAIL is deleted below so the mail
+// door is never opened; the price-id env vars are set to obvious fakes.
+// ----------------------------------------------------------------------------
+import './resolver'; // MUST stay first: installs the '@/...' require hook.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  utcFirstOfMonth,
+  invoiceLinePriceId,
+  sessionLinePriceId,
+  accrueForSource,
+  type AccrualDb,
+} from '../../lib/rail/accrual';
+import {
+  claimEvent,
+  handleStripeEvent,
+  recordWebhookFailure,
+  type HandlerResult,
+} from '../../lib/rail/webhook-handler';
+import { FakeDb, FakeStripe, fakeInvoice, fakeEvent, invoiceLine, sessionLine } from './fakes';
+
+// ── the environment the catalog reads by name ───────────────────────────────
+const WORKER = 'price_fake_worker_004';
+const HONEY = 'price_fake_honey_004';
+const QUEENS = 'price_fake_queens_004';
+process.env.STRIPE_WORKER_BEE_PRICE_ID = WORKER;
+process.env.STRIPE_HONEY_MAKER_PRICE_ID = HONEY;
+process.env.STRIPE_QUEENS_COUNCIL_PRICE_ID = QUEENS;
+delete process.env.HIVE_ALERT_EMAIL; // no alert email leaves this test
+
+// ── the colony under test ───────────────────────────────────────────────────
+// ag_src pays. ag_one is its referrer (L1), ag_two is ag_one's referrer (L2).
+// ag_three sits above ag_two and must NOT appear: R11, two levels and no more.
+function seed(): FakeDb {
+  const db = new FakeDb();
+  db.rows.agents = [
+    { id: 'ag_src', name: 'Source', email: 'src@example.test', soul: 'The Operator',
+      referral_code: 'SRC', referred_by_code: 'ONE', status: 'active', tier: 'worker_bee' },
+    { id: 'ag_one', name: 'Level One', referral_code: 'ONE', referred_by_code: 'TWO',
+      status: 'active', tier: 'worker_bee' },
+    { id: 'ag_two', name: 'Level Two', referral_code: 'TWO', referred_by_code: 'THREE',
+      status: 'active', tier: 'honey_maker' },
+    { id: 'ag_three', name: 'Level Three', referral_code: 'THREE', referred_by_code: null,
+      status: 'active', tier: 'honey_maker' },
+  ];
+  db.rows.members = [
+    { id: 'mem_1', email: 'src@example.test', agent_id: 'ag_src',
+      stripe_customer_id: 'cus_test_1', stripe_subscription_id: 'sub_test_1', status: 'active' },
+  ];
+  return db;
+}
+
+/**
+ * The route's wiring, and only the route's wiring: claim, answer a duplicate, record
+ * and 500 an unavailable claim, otherwise dispatch. Every function it calls is the
+ * real one — this stands in for NextResponse, which is all a test cannot have.
+ * Kept to the same five branches as app/api/stripe/webhook/route.ts so a drift
+ * between them is visible in one diff.
+ */
+async function deliver(db: FakeDb, stripe: any, event: any): Promise<HandlerResult> {
+  const claim = await claimEvent(db as unknown as AccrualDb, event);
+  if (claim.kind === 'duplicate') {
+    return { status: 200, body: { received: true, already_processed: true } };
+  }
+  if (claim.kind === 'unavailable') {
+    await recordWebhookFailure(db, {
+      event_id: event.id, event_type: event.type, reason: 'claim_failed',
+      detail: { code: claim.code, message: claim.message },
+    });
+    return { status: 500, body: { error: 'event claim unavailable' } };
+  }
+  return await handleStripeEvent(
+    { stripe, db: db as unknown as AccrualDb, now: () => new Date() },
+    event,
+  );
+}
+
+const invoiceEvent = (o: Parameters<typeof fakeInvoice>[0], ev?: { id?: string; ageSeconds?: number }) =>
+  fakeEvent('invoice.payment_succeeded', fakeInvoice(o), ev);
+
+// ════════════════════════════════════════════════════════════════════════════
+// (a) the month comes from UTC, never the server's zone
+// ════════════════════════════════════════════════════════════════════════════
+test('(a) utcFirstOfMonth reads the UTC month, so a negative-offset server cannot shift it', () => {
+  // 2026-10-01T00:30:00Z is still September 30 in New York. D4/R5 is exactly this bug.
+  assert.equal(utcFirstOfMonth(Math.floor(Date.UTC(2026, 9, 1, 0, 30) / 1000)), '2026-10-01');
+  assert.equal(utcFirstOfMonth(Math.floor(Date.UTC(2026, 9, 31, 23, 59) / 1000)), '2026-10-01');
+  assert.equal(utcFirstOfMonth(Math.floor(Date.UTC(2027, 0, 1, 0, 0) / 1000)), '2027-01-01');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (b) the two price-id shapes the installed SDK defines
+// ════════════════════════════════════════════════════════════════════════════
+test('(b) a price id is read through the shape each SDK type actually has', () => {
+  assert.equal(invoiceLinePriceId(invoiceLine(WORKER) as any), WORKER);
+  assert.equal(invoiceLinePriceId(invoiceLine(null) as any), null);
+  assert.equal(sessionLinePriceId(sessionLine(QUEENS) as any), QUEENS);
+  assert.equal(sessionLinePriceId(sessionLine(null) as any), null);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (c) the first delivery accrues: two levels, integer cents, one rpc
+// ════════════════════════════════════════════════════════════════════════════
+test('(c) invoice.payment_succeeded accrues L1 20% and L2 10% in integer cents, in one rpc', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 1);
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_invoice_ref, 'in_test_1');
+  assert.equal(args.p_source_agent, 'ag_src');
+  assert.equal(args.p_source_cents, 1000);
+  assert.equal(args.p_period_month, '2026-10-01');
+  assert.equal(args.p_livemode, false);
+  assert.deepEqual(args.p_rows, [
+    { earning_agent_id: 'ag_one', level: 1, rate_bps: 2000, amount_cents: 200 },
+    { earning_agent_id: 'ag_two', level: 2, rate_bps: 1000, amount_cents: 100 },
+  ]);
+  // R11 · nothing above level 2, however long the chain is.
+  assert.equal(args.p_rows.length, 2);
+  // The amount came from the RETRIEVED invoice (R6), so the retrieve happened.
+  assert.deepEqual(stripe.retrieveCalls, ['invoice:in_test_1']);
+  assert.equal(db.failures().length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (d) replay of the same event: 200 already_processed, nothing written
+// ════════════════════════════════════════════════════════════════════════════
+test('(d) a replayed event answers 200 already_processed and writes nothing', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+  const event = invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] });
+
+  const first = await deliver(db, stripe, event);
+  const rpcAfterFirst = db.countRpc();
+  const second = await deliver(db, stripe, event);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.already_processed, true);
+  assert.equal(rpcAfterFirst, 1);
+  assert.equal(db.countRpc(), 1, 'the replay must not reach rail_accrue at all');
+  assert.equal(stripe.retrieveCalls.length, 1, 'the replay must not even retrieve the invoice');
+  assert.equal(db.rows.stripe_events.length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (e) two concurrent deliveries: exactly one claim, exactly one rpc
+// ════════════════════════════════════════════════════════════════════════════
+test('(e) two concurrent deliveries of one event produce exactly one claim and one rpc', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 7900, priceIds: [HONEY] }) });
+  const event = invoiceEvent({ amountPaid: 7900, priceIds: [HONEY] });
+
+  const [a, b] = await Promise.all([deliver(db, stripe, event), deliver(db, stripe, event)]);
+
+  const duplicates = [a, b].filter((r) => r.body.already_processed === true);
+  assert.equal(duplicates.length, 1, 'exactly one delivery must lose the claim');
+  assert.equal(db.rows.stripe_events.length, 1);
+  assert.equal(db.countRpc(), 1, 'exactly one accrual write');
+  assert.equal(a.status, 200);
+  assert.equal(b.status, 200);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (f) the second invoice event type, same invoice: claimed once, no double accrual
+// ════════════════════════════════════════════════════════════════════════════
+test('(f) invoice_payment.paid resolves the same invoice and the second event writes nothing', async () => {
+  const db = seed();
+  const invoice = fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] });
+  const stripe = new FakeStripe({ invoice });
+
+  const succeeded = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] },
+    { id: 'evt_succeeded' }));
+  // A DIFFERENT event id — Stripe sends both types — carrying only a reference.
+  const paid = await deliver(db, stripe, fakeEvent(
+    'invoice_payment.paid',
+    { id: 'inpay_1', invoice: 'in_test_1' },
+    { id: 'evt_paid' },
+  ));
+
+  assert.equal(succeeded.status, 200);
+  assert.equal(paid.status, 200);
+  assert.equal(db.rows.stripe_events.length, 2, 'two events, both claimed');
+  assert.equal(db.countRpc(), 2, 'both reach rail_accrue — the index is what refuses the second');
+  // The invoice ref is identical, which is what makes the second a no-op in the DB.
+  assert.deepEqual(db.rpcCalls.map((c) => c.args.p_invoice_ref), ['in_test_1', 'in_test_1']);
+  assert.equal(db.accrued.size, 1, 'one invoice claimed once');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (g) R10 · amount 0
+// ════════════════════════════════════════════════════════════════════════════
+test('(g) a paid invoice with amount 0 writes nothing (trial, 100%-off voucher)', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 0, priceIds: [WORKER] }) });
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 0, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 0);
+  assert.equal(db.failures().length, 0, 'zero is not a fault and needs no row');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (h) R47 · a price that is not in the catalog
+// ════════════════════════════════════════════════════════════════════════════
+test('(h) a non-catalog price accrues nothing and records non_membership_payment', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 4900, priceIds: ['price_some_bounty'] }) });
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 4900, priceIds: ['price_some_bounty'] }));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 0);
+  const rows = db.failures('non_membership_payment');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].event_id, 'evt_test_1');
+  assert.deepEqual(rows[0].detail.price_ids, ['price_some_bounty']);
+});
+
+test('(h2) a mixed cart — one membership line and one unpriced line — accrues nothing', async () => {
+  const db = seed();
+  const inv = fakeInvoice({ amountPaid: 1000, priceIds: [WORKER, null] });
+  const stripe = new FakeStripe({ invoice: inv });
+  const res = await deliver(db, stripe, fakeEvent('invoice.payment_succeeded', inv));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 0);
+  assert.equal(db.failures('non_membership_payment').length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (i) R59 · the rail_accrue error is never swallowed
+// ════════════════════════════════════════════════════════════════════════════
+test('(i) a rail_accrue error answers 500 and releases the claim so Stripe retries', async () => {
+  const db = seed();
+  db.rpcError = { code: '42883', message: 'function rail_accrue(unknown) does not exist' };
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 500, 'the 500 IS the retry signal in the R59 deploy gap');
+  assert.equal(res.body.error, 'webhook failed after claim');
+  assert.equal(db.rows.stripe_events.length, 0, 'claim released (R14)');
+  assert.equal(db.failures('claim_release_failed').length, 0);
+
+  // And the retry succeeds once the function exists.
+  db.rpcError = null;
+  const retry = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+  assert.equal(retry.status, 200);
+  assert.equal(db.countRpc(), 2);
+  assert.equal(db.accrued.size, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (j) R6/R14 · the retrieve itself fails
+// ════════════════════════════════════════════════════════════════════════════
+test('(j) a failing invoices.retrieve answers 500 and releases the claim', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ retrieveError: 'connection reset by peer' });
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 500);
+  assert.equal(db.rows.stripe_events.length, 0);
+  assert.equal(db.countRpc(), 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (k) R14's second branch · the release fails too
+// ════════════════════════════════════════════════════════════════════════════
+test('(k) when the claim cannot be released, a claim_release_failed row is written and it is still 500', async () => {
+  const db = seed();
+  db.rpcError = { message: 'deadlock detected' };
+  db.releaseError = { code: '42P01', message: 'relation "stripe_events" does not exist' };
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 500);
+  const rows = db.failures('claim_release_failed');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].event_type, 'invoice.payment_succeeded');
+  assert.equal(db.rows.stripe_events.length, 1, 'the claim stays; only a human moves it now');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (l)(m) H3 · the 30-minute member race
+// ════════════════════════════════════════════════════════════════════════════
+test('(l) no member 5 minutes after the event: 500 and the claim is released (assume the race)', async () => {
+  const db = seed();
+  db.rows.members = []; // checkout has not landed yet
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe,
+    invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }, { ageSeconds: 5 * 60 }));
+
+  assert.equal(res.status, 500);
+  assert.equal(db.rows.stripe_events.length, 0, 'released, so Stripe\'s retry is processed');
+  assert.equal(db.countRpc(), 0);
+  assert.equal(db.failures('member_not_found').length, 0, 'not quarantined — it is still a race');
+});
+
+test('(m) no member 2 hours after the event: 200 quarantined with a member_not_found row', async () => {
+  const db = seed();
+  db.rows.members = [];
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe,
+    invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }, { ageSeconds: 2 * 60 * 60 }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.quarantined, true);
+  assert.equal(db.rows.stripe_events.length, 1, 'claim kept: a retry cannot conjure a member');
+  const rows = db.failures('member_not_found');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail.customer, 'cus_test_1');
+  assert.ok(rows[0].detail.age_ms >= 2 * 60 * 60 * 1000);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (n) R3/R4 · the floor, at all three tier amounts
+// ════════════════════════════════════════════════════════════════════════════
+test('(n) floor(cents × rate_bps / 10000) at every tier amount: 200/100, 1580/790, 4980/2490', async () => {
+  const cases: Array<[number, number, number, string]> = [
+    [1000, 200, 100, WORKER],
+    [7900, 1580, 790, HONEY],
+    [24900, 4980, 2490, QUEENS],
+  ];
+  for (const [cents, l1, l2, price] of cases) {
+    const db = seed();
+    const mode = price === QUEENS ? 'payment' : 'subscription';
+    const outcome = await accrueForSource(
+      { stripe: {} as any, db: db as unknown as AccrualDb, now: () => new Date() },
+      { ref: `ref_${cents}`, amountCents: cents, periodMonth: '2026-10-01', livemode: false,
+        mode, priceIds: [price], sourceAgentId: 'ag_src' },
+      async () => [{ agentId: 'ag_one', level: 1 }, { agentId: 'ag_two', level: 2 }],
+    );
+    assert.equal(outcome.kind, 'written', `${cents} should write`);
+    const args: any = db.lastAccrual();
+    assert.deepEqual(
+      args.p_rows.map((r: any) => r.amount_cents), [l1, l2],
+      `${cents} cents must split to ${l1} and ${l2}`,
+    );
+    // Integers, not floats: 24900 × 0.1 is 2490.0000000000005 in IEEE 754.
+    for (const r of args.p_rows) assert.ok(Number.isInteger(r.amount_cents));
+  }
+});
+
+test('(n2) a repeated p_invoice_ref comes back as a replay, not a second write', async () => {
+  const db = seed();
+  const call = () => accrueForSource(
+    { stripe: {} as any, db: db as unknown as AccrualDb, now: () => new Date() },
+    { ref: 'ref_same', amountCents: 1000, periodMonth: '2026-10-01', livemode: false,
+      mode: 'subscription', priceIds: [WORKER], sourceAgentId: 'ag_src' },
+    async () => [{ agentId: 'ag_one', level: 1 }],
+  );
+  assert.equal((await call()).kind, 'written');
+  assert.equal((await call()).kind, 'replay');
+  assert.equal(db.countRpc(), 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (o)(p)(q) §5.9 · cancellation
+// ════════════════════════════════════════════════════════════════════════════
+for (const status of ['canceled', 'unpaid'] as const) {
+  test(`(o/p) customer.subscription.updated status '${status}' cancels members AND agents`, async () => {
+    const db = seed();
+    const stripe = new FakeStripe();
+    const res = await deliver(db, stripe, fakeEvent('customer.subscription.updated', {
+      id: 'sub_test_1', status, cancel_at_period_end: false,
+    }));
+
+    assert.equal(res.status, 200);
+    assert.equal(db.member('cus_test_1')!.status, 'inactive');
+    // FIND-WH-1: isActiveEarner reads agents.status, so the write must land there too.
+    assert.equal(db.agent('ag_src')!.status, 'inactive');
+  });
+}
+
+test('(q) cancel_at_period_end alone changes nothing — the member has paid through the period', async () => {
+  const db = seed();
+  const stripe = new FakeStripe();
+  const res = await deliver(db, stripe, fakeEvent('customer.subscription.updated', {
+    id: 'sub_test_1', status: 'active', cancel_at_period_end: true,
+  }));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.member('cus_test_1')!.status, 'active');
+  assert.equal(db.agent('ag_src')!.status, 'active');
+  assert.equal(db.calls.filter((c) => c.table === 'members' && c.op === 'update').length, 0);
+});
+
+test('(q2) customer.subscription.deleted cancels, and a members error answers 500', async () => {
+  const db = seed();
+  const stripe = new FakeStripe();
+  const ok = await deliver(db, stripe, fakeEvent('customer.subscription.deleted',
+    { id: 'sub_test_1', status: 'canceled' }, { id: 'evt_del_1' }));
+  assert.equal(ok.status, 200);
+  assert.equal(db.agent('ag_src')!.status, 'inactive');
+
+  const db2 = seed();
+  db2.writeError = { table: 'members', error: { message: 'could not serialize access' } };
+  const bad = await deliver(db2, stripe, fakeEvent('customer.subscription.deleted',
+    { id: 'sub_test_1', status: 'canceled' }, { id: 'evt_del_2' }));
+  assert.equal(bad.status, 500, 'a silent miss would leave a cancelled bee earning');
+  assert.equal(bad.body.error, 'members update failed');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (r) R15 · invoice.payment_failed, and its error
+// ════════════════════════════════════════════════════════════════════════════
+test('(r) invoice.payment_failed marks the member, and a failed write answers 500', async () => {
+  const db = seed();
+  const stripe = new FakeStripe();
+  const res = await deliver(db, stripe, fakeEvent('invoice.payment_failed',
+    { id: 'in_failed_1', customer: 'cus_test_1' }, { id: 'evt_fail_1' }));
+  assert.equal(res.status, 200);
+  assert.equal(db.member('cus_test_1')!.status, 'payment_failed');
+
+  const db2 = seed();
+  db2.writeError = { table: 'members', error: { code: '40001', message: 'serialization failure' } };
+  const bad = await deliver(db2, stripe, fakeEvent('invoice.payment_failed',
+    { id: 'in_failed_1', customer: 'cus_test_1' }, { id: 'evt_fail_2' }));
+  assert.equal(bad.status, 500, 'the discarded error (R15) is now checked');
+  assert.equal(db2.rows.stripe_events.length, 0, 'claim released');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (s) an invoice with no customer
+// ════════════════════════════════════════════════════════════════════════════
+test('(s) an invoice with no customer is quarantined 200, not accrued', async () => {
+  const db = seed();
+  const inv = fakeInvoice({ amountPaid: 1000, customer: null, priceIds: [WORKER] });
+  const stripe = new FakeStripe({ invoice: inv });
+  const res = await deliver(db, stripe, fakeEvent('invoice.payment_succeeded', inv));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.quarantined, true);
+  assert.equal(db.countRpc(), 0);
+  assert.equal(db.failures('invoice_without_customer').length, 1);
+});
+
+test('(s2) an invoice event with no invoice id is quarantined 200', async () => {
+  const db = seed();
+  const stripe = new FakeStripe();
+  const res = await deliver(db, stripe, fakeEvent('invoice_payment.paid', { id: 'inpay_x', invoice: null }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.quarantined, true);
+  assert.equal(stripe.retrieveCalls.length, 0);
+  assert.equal(db.failures('invoice_id_missing').length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (t) §5.5 · the one-time payment, on the payment intent ref
+// ════════════════════════════════════════════════════════════════════════════
+test('(t) a one-time checkout accrues on the payment intent, with that intent\'s UTC month', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({
+    paymentIntent: {
+      id: 'pi_queens_1', livemode: false,
+      created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
+    },
+    sessionLineItems: [sessionLine(QUEENS)],
+  });
+  const session = {
+    id: 'cs_queens_1', mode: 'payment', amount_total: 24900,
+    customer: 'cus_test_1', customer_email: 'src@example.test',
+    payment_intent: 'pi_queens_1', subscription: null,
+    metadata: { tier: 'queens', agentName: 'Source', soul: 'The Operator', agent_id: 'ag_src' },
+  };
+
+  const res = await deliver(db, stripe, fakeEvent('checkout.session.completed', session));
+
+  assert.equal(res.status, 200);
+  assert.equal(db.countRpc(), 1);
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_invoice_ref, 'pi_queens_1', 'the ref is the payment intent, not the session');
+  assert.equal(args.p_period_month, '2026-10-01');
+  assert.deepEqual(args.p_rows.map((r: any) => r.amount_cents), [4980, 2490]);
+  // The tier word was translated once, at the boundary.
+  assert.equal(db.member('cus_test_1')!.tier, 'queens_council');
+});
+
+test('(t2) an unrecognised metadata.tier is quarantined 200 and writes no member', async () => {
+  const db = seed();
+  db.rows.members = [];
+  const stripe = new FakeStripe();
+  const res = await deliver(db, stripe, fakeEvent('checkout.session.completed', {
+    id: 'cs_bad_1', mode: 'subscription', customer: 'cus_new', customer_email: 'new@example.test',
+    metadata: { tier: 'platinum' },
+  }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.quarantined, true);
+  assert.equal(db.rows.members.length, 0);
+  assert.equal(db.countRpc(), 0);
+  assert.equal(db.failures('unrecognised_tier').length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (u) the claim cannot be made at all
+// ════════════════════════════════════════════════════════════════════════════
+test('(u) an unavailable claim fails closed: 500, a claim_failed row, and no work done', async () => {
+  const db = seed();
+  db.writeError = { table: 'stripe_events', error: { code: '42P01', message: 'relation "stripe_events" does not exist' } };
+  const stripe = new FakeStripe({ invoice: fakeInvoice({ amountPaid: 1000, priceIds: [WORKER] }) });
+
+  const res = await deliver(db, stripe, invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }));
+
+  assert.equal(res.status, 500);
+  assert.equal(db.countRpc(), 0, 'failing open would double-pay');
+  assert.equal(stripe.retrieveCalls.length, 0);
+});
