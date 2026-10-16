@@ -619,7 +619,14 @@ export async function handleStripeEvent(
           event_id: event.id, subscription: sub.id, stage: result.stage,
           error: (result.error as any)?.message ?? String(result.error),
         });
-        return json({ error: `${result.stage} update failed` }, 500);
+        // M-1 (Nikita) · THE CLAIM HAS TO COME OFF. This branch used to return a bare
+        // 500 with the claim still held, so Stripe's retry hit the duplicate check and
+        // was answered 200 already_processed — the 500 bought a retry that could never
+        // do anything, and the cancellation was lost. A cancelled bee that keeps
+        // agents.status 'active' keeps earning, which is money moving the wrong way.
+        // Every other failure after the claim already went through failAfterClaim;
+        // this was the one path that did not, and R14 has no exception for it.
+        return await failAfterClaim(supabase, event, `cancel_${result.stage}`, result.error);
       }
       if (result.agentIds.length === 0) {
         console.warn('subscription cancellation: no member row with an agent_id', {

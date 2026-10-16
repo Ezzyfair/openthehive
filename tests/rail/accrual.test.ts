@@ -428,7 +428,7 @@ test('(q) cancel_at_period_end alone changes nothing — the member has paid thr
   assert.equal(db.calls.filter((c) => c.table === 'members' && c.op === 'update').length, 0);
 });
 
-test('(q2) customer.subscription.deleted cancels, and a members error answers 500', async () => {
+test('(q2) customer.subscription.deleted cancels, and a members error answers 500 with the claim released', async () => {
   const db = seed();
   const stripe = new FakeStripe();
   const ok = await deliver(db, stripe, fakeEvent('customer.subscription.deleted',
@@ -441,7 +441,45 @@ test('(q2) customer.subscription.deleted cancels, and a members error answers 50
   const bad = await deliver(db2, stripe, fakeEvent('customer.subscription.deleted',
     { id: 'sub_test_1', status: 'canceled' }, { id: 'evt_del_2' }));
   assert.equal(bad.status, 500, 'a silent miss would leave a cancelled bee earning');
-  assert.equal(bad.body.error, 'members update failed');
+  // M-1 · the 500 goes out through failAfterClaim, so it reads like every other
+  // post-claim failure rather than announcing the stage to Stripe.
+  assert.equal(bad.body.error, 'webhook failed after claim');
+  assert.equal(db2.rows.stripe_events.length, 0,
+    'claim released so Stripe retries the cancellation');
+});
+
+test('(q3) M-1 · an agents-stage error also releases the claim, not just the members stage', async () => {
+  const db2 = seed();
+  const stripe = new FakeStripe();
+  // The members update succeeds and hands back the agent ids; the agents update is
+  // the one that fails. This is the worse half of the bug: members already reads
+  // 'inactive' while agents.status is still 'active', and isActiveEarner reads
+  // agents — so a lost retry here leaves a cancelled bee earning.
+  db2.writeError = { table: 'agents', error: { code: '40001', message: 'serialization failure' } };
+
+  const bad = await deliver(db2, stripe, fakeEvent('customer.subscription.deleted',
+    { id: 'sub_test_1', status: 'canceled' }, { id: 'evt_del_3' }));
+
+  assert.equal(bad.status, 500);
+  assert.equal(bad.body.error, 'webhook failed after claim');
+  assert.equal(db2.rows.stripe_events.length, 0,
+    'claim released so Stripe retries the cancellation');
+  assert.equal(db2.failures('claim_release_failed').length, 0, 'the release itself worked');
+  // The half-applied state the retry has to finish: members moved, agents did not.
+  assert.equal(db2.member('cus_test_1')!.status, 'inactive');
+  assert.equal(db2.agent('ag_src')!.status, 'active');
+});
+
+test('(q4) M-1 · the same release happens on customer.subscription.updated -> canceled', async () => {
+  const db2 = seed();
+  db2.writeError = { table: 'agents', error: { message: 'deadlock detected' } };
+  const bad = await deliver(db2, new FakeStripe(), fakeEvent('customer.subscription.updated',
+    { id: 'sub_test_1', status: 'canceled', cancel_at_period_end: false }, { id: 'evt_upd_fail' }));
+
+  assert.equal(bad.status, 500);
+  assert.equal(bad.body.error, 'webhook failed after claim');
+  assert.equal(db2.rows.stripe_events.length, 0,
+    'claim released so Stripe retries the cancellation');
 });
 
 // ════════════════════════════════════════════════════════════════════════════
