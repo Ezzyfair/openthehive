@@ -49,10 +49,13 @@ const MEMBER_TREE = 'app/api/member/payouts';
 const MONEY_TABLES = ['referral_earnings', 'hive_revenue', 'payouts'];
 const WRITE_VERBS = ['insert', 'update', 'upsert', 'delete'];
 
-// R60's single exemption, by exact path, with the reason it is temporary.
-const WRITE_EXEMPT = new Map([
-  ['lib/referral-engine.ts', 'legacy writer, removed by NIK-RAIL-004'],
-]);
+// R60 exemptions, by exact path. EMPTY SINCE NIK-RAIL-004, and that is the point:
+// lib/referral-engine.ts was the one entry here, exempted as "legacy writer, removed
+// by NIK-RAIL-004". Commit 4 removed that writer, so the exemption came out with it
+// and the guard now runs with ZERO exemptions. An empty map rather than a deleted
+// one: the next ticket that wants an exemption has to add a line to a diff and
+// defend it in review.
+const WRITE_EXEMPT = new Map([]);
 
 // lib/rail/** is where the three functions are called from, so it is not a
 // violation for rail code to name a money table.

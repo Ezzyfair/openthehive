@@ -7,7 +7,8 @@
     "prebuild": "node scripts/antenna-release.mjs --check && node scripts/check-bee-routes.mjs && node scripts/check-human-window.mjs && node scripts/check-rail-routes.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:rail": "npx tsc -p tests/rail/tsconfig.json --outDir .rail-test-dist && node --test '.rail-test-dist/**/*.test.js'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",

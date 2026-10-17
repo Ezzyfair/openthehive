@@ -12,3 +12,6 @@ next-env.d.ts
 .claude/settings.local.json
 __pycache__/
 *.pyc
+
+# NIK-RAIL-004 · the self-test build output
+.rail-test-dist/

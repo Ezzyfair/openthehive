@@ -99,8 +99,6 @@ grep -n -P '(?i)\bbeemates?\b|(?-i)\bStrike\b|\bBuzz\b|\bBEEMATE|\bSTRIKE_|_STRI
 
 Permitted-after-review (grep 3 hits that stay, reviewer confirms the line is unchanged):
 - `components/HiveHomepageClient.tsx:309` — Block's product Buzz, past-tense factual claim.
-- `app/api/payouts/route.ts:92, :93, :100` — Strike/ETH rail text, open under checklist C rail
-  cutover; goes to zero when Stripe Connect lands.
 
 ## Where things are
 

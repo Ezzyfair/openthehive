@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
 
 // NIK-RAIL-000 — DEFUSED. Ruled by Francis Oct 12 (RAIL-DESIGN-v1.1 §15 row 0, R-G).
 //
-// WHAT WAS HERE: POST called recordSubscriptionEarnings(agent_id, amount, month) —
+// WHAT WAS HERE: POST called the legacy accrual writer in lib/referral-engine.ts —
 // it CREATED ACCRUALS in referral_earnings and hive_revenue — and it checked NO
 // credential at all. Not a key, not a signature, not a secret: any unauthenticated
 // request with three JSON fields minted commission rows for any agent id, at any
