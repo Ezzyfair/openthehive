@@ -145,12 +145,32 @@ SELECT 'payout_notices', count(*)
   FROM payout_notices n
  WHERE n.agent_id IN (SELECT id FROM _cleanup_agents);
 
--- A LIVE-MODE SAFETY READ, printed so the operator sees it was never in scope.
+-- A LIVE-MODE SAFETY READ over ALL THREE money tables (addendum LOW-2). It covered
+-- only referral_earnings before, which is the table most likely to hold a live row for
+-- a test bee but not the only one: a bee that ever earned in live mode has a
+-- hive_revenue row behind it and may have a payouts row. An operator reading one line
+-- and seeing 0 could reasonably conclude the whole live side was untouched, which the
+-- single read did not actually show.
 \echo '── live-mode rows for these agents (must be unchanged by this script) ──'
 SELECT 'referral_earnings LIVE' AS table_name, count(*) AS rows
   FROM referral_earnings re
  WHERE re.livemode = true
    AND (re.earning_agent_id IN (SELECT id FROM _cleanup_agents)
-        OR re.source_agent_id IN (SELECT id FROM _cleanup_agents));
+        OR re.source_agent_id IN (SELECT id FROM _cleanup_agents))
+UNION ALL
+SELECT 'hive_revenue LIVE', count(*)
+  FROM hive_revenue h
+ WHERE h.livemode = true
+   AND h.source_agent_id IN (SELECT id FROM _cleanup_agents)
+UNION ALL
+SELECT 'payouts LIVE', count(*)
+  FROM payouts p
+ WHERE p.livemode = true
+   AND p.agent_id IN (SELECT id FROM _cleanup_agents);
+
+-- payout_notices has no livemode column (M1 §4.5), so it cannot appear in a live-mode
+-- read at all — which is the same fact the DELETE above is annotated with, and the one
+-- place this script is wider than fence 1. Nothing to print here would be honest; the
+-- note at the DELETE is where a reviewer should look.
 
 COMMIT;

@@ -18,6 +18,15 @@
 --
 -- PATH NOTE. The ticket names this file tests/rail/sql/; the M1 stub and self-test live
 -- in supabase/tests/. Both locations are now in use, which is worth settling in v1.2.
+--
+-- R63 IS PROVEN IN TWO HALVES, AND ONLY ONE OF THEM IS HERE (addendum M-1).
+--   FORWARD  — the payout opens first, so the reversal finds the row in_transit and
+--              counts it as `untouched`, touching nothing: the in_B block below.
+--   REVERSE  — the reversal locks first, so the payout's FOR UPDATE SKIP LOCKED
+--              passes over the row and opens nothing: tests/rail/sql/rail_reverse.r63.sh,
+--              a sibling runner, because that half needs TWO concurrent sessions and a
+--              single psql script cannot hold one transaction open while another runs.
+--              Run it with: bash tests/rail/sql/rail_reverse.r63.sh
 -- ----------------------------------------------------------------------------
 BEGIN;
 
