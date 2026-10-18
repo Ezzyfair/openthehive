@@ -934,12 +934,20 @@ test('(ff) a refund on an invoice the rail never accrued records reversal_unreso
   const db = seed(); // nothing accrued at all
   const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_pre_rail')] });
 
+  // AGED PAST 30 MINUTES SINCE F2. This test models a PRE-RAIL invoice — an invoice
+  // that was never accrued and never will be — and F2 made the age the thing that
+  // distinguishes that from a refund which merely overtook its accrual. A fresh event
+  // here now takes the race path and 500s, which is correct behaviour and was caught
+  // by this assertion failing on the first run of the fix round.
   const res = await deliver(db, stripe, fakeEvent('charge.refunded',
-    fakeCharge({ paymentIntent: 'pi_pre_rail' }), { id: 'evt_pre_rail' }));
+    fakeCharge({ paymentIntent: 'pi_pre_rail' }),
+    { id: 'evt_pre_rail', ageSeconds: 2 * 60 * 60 }));
 
   assert.equal(res.status, 200);
   assert.equal(res.body.known, false);
-  assert.equal(db.countRpc('rail_reverse'), 1, 'the function was still asked');
+  // TWO calls since F1: the resolved invoice ref, then the second look against the
+  // payment intent. Both unknown, which is what makes this the recorded case.
+  assert.equal(db.countRpc('rail_reverse'), 2, 'both refs were asked about');
   const rows = db.failures('reversal_unresolved');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].detail.ref, 'in_pre_rail');
@@ -1123,4 +1131,168 @@ test('(mm) OBS3 · is_staff earns whatever its tier and status; a null-tier non-
   const args2: any = db2.lastAccrual();
   assert.equal(args2.p_rows.some((r: any) => r.earning_agent_id === 'ag_one'), false,
     'a non-staff scout does not earn');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// NIK-RAIL-005 fix round F1-F5 (chat-seat review). Ids (nn) onward.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Did anything reach the one mail door? sendEmail's first touch is this table. */
+const mailAttempts = (db: FakeDb) =>
+  db.calls.filter((c) => c.table === 'email_suppressions' || c.table === 'email_sends').length;
+
+// ════════════════════════════════════════════════════════════════════════════
+// (nn) F2 · a refund that arrives BEFORE its accrual is retried, not quarantined
+// ════════════════════════════════════════════════════════════════════════════
+test('(nn) F2 · an unknown ref on a YOUNG event answers 500 and releases the claim, and the retry reverses', async () => {
+  const db = seed(); // nothing accrued yet — the refund got here first
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_race_1')] });
+  const refund = fakeEvent('charge.refunded', fakeCharge({ paymentIntent: 'pi_race_1' }),
+    { id: 'evt_race_1', ageSeconds: 20 });
+
+  const first = await deliver(db, stripe, refund);
+
+  assert.equal(first.status, 500, 'inside 30 minutes, assume the ordering race (§5.8/H3)');
+  assert.equal(first.body.error, 'webhook failed after claim');
+  assert.equal(db.rows.stripe_events.some((e) => e.event_id === 'evt_race_1'), false,
+    'claim released so Stripe re-delivers on its own backoff');
+  assert.equal(db.failures('reversal_unresolved').length, 0, 'NOT quarantined — it is a race');
+  assert.equal(db.failures('claim_release_failed').length, 0);
+
+  // Now the invoice event lands and the accrual is written.
+  const inv = fakeInvoice({ id: 'in_race_1', amountPaid: 1000, priceIds: [WORKER] });
+  const accrued = await deliver(db, new FakeStripe({ invoice: inv }),
+    fakeEvent('invoice.payment_succeeded', inv, { id: 'evt_race_accrue' }));
+  assert.equal(accrued.status, 200);
+  assert.equal(db.rows.referral_earnings.length, 2);
+
+  // Stripe's retry of the SAME refund event now succeeds.
+  const retry = await deliver(db, stripe, refund);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.reversed, 2, 'the refund that was too early is not lost');
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (oo) F2 · an unknown ref on an OLD event is recorded, not retried without end
+// ════════════════════════════════════════════════════════════════════════════
+test('(oo) F2 · an unknown ref on an event older than 30 minutes records reversal_unresolved with no alert', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_pre_rail_2')] });
+  process.env.HIVE_ALERT_EMAIL = 'ops@example.test'; // set, to prove it is NOT used
+
+  try {
+    const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+      fakeCharge({ paymentIntent: 'pi_pre_rail_2' }),
+      { id: 'evt_old_unknown', ageSeconds: 2 * 60 * 60 }));
+
+    assert.equal(res.status, 200, 'a two-hour-old event is not a race; a retry cannot help');
+    assert.equal(res.body.known, false);
+    assert.equal(db.rows.stripe_events.some((e) => e.event_id === 'evt_old_unknown'), true,
+      'the claim is KEPT: Stripe should stop retrying this one');
+    const rows = db.failures('reversal_unresolved');
+    assert.equal(rows.length, 1);
+    assert.ok(rows[0].detail.age_ms >= 2 * 60 * 60 * 1000);
+    assert.equal(rows[0].detail.ref, 'in_pre_rail_2');
+    // §6 · information, not a fault: NO alert, even with the recipient configured.
+    assert.equal(mailAttempts(db), 0, 'no alert email was attempted');
+  } finally {
+    delete process.env.HIVE_ALERT_EMAIL;
+  }
+});
+
+test('(oo2) F2 · the boundary is read from deps.now(), like the member race', async () => {
+  const db = seed();
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_clock_1')] });
+  // The event is seconds old by the real clock; only the injected one makes it old.
+  const threeHoursOn = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_clock_1' }), { id: 'evt_clock_1', ageSeconds: 10 }),
+    threeHoursOn);
+
+  assert.equal(res.status, 200, 'outside the window by the injected clock');
+  assert.equal(db.failures('reversal_unresolved').length, 1);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (pp) F5 · an invoice payment that names no invoice fails closed
+// ════════════════════════════════════════════════════════════════════════════
+test('(pp) F5 · an invoice payment with a null invoice is no_invoice_and_no_intent, a row, no rpc', async () => {
+  const db = await seedAccrued('in_nullinv_1');
+  // The list returns a row, but its invoice is null — a shape that should not exist.
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment(null)] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_nullinv_1' }), { id: 'evt_nullinv' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.unresolved, 'no_invoice_and_no_intent');
+  // The point of failing closed: it did NOT fall back to the intent id, because that
+  // could be a different ref from the one the accrual used.
+  assert.equal(db.countRpc('rail_reverse'), 0, 'no reversal was attempted at all');
+  const rows = db.failures('reversal_unresolved');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail.cause, 'no_invoice_and_no_intent');
+  assert.equal(rows[0].detail.intent_id, 'pi_nullinv_1');
+  // and the accruals are exactly as they were
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'pending').length, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (qq) F1 · invoice_creation: resolved to an invoice, accrued on the intent
+// ════════════════════════════════════════════════════════════════════════════
+test('(qq) F1 · a one-time payment that also made an invoice reverses on the second look', async () => {
+  const db = seed();
+  // Accrue the one-time way: the ref is the PAYMENT INTENT (§5.5).
+  const stripeAccrue = new FakeStripe({
+    paymentIntent: {
+      id: 'pi_invcreate_1', livemode: false, amount_received: 24900, customer: 'cus_test_1',
+      created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
+    },
+    sessionLineItems: [sessionLine(QUEENS)],
+  });
+  const accrued = await deliver(db, stripeAccrue, fakeEvent('checkout.session.completed', {
+    id: 'cs_invcreate_1', mode: 'payment', amount_total: 24900, customer: 'cus_test_1',
+    customer_email: 'src@example.test', payment_intent: 'pi_invcreate_1', subscription: null,
+    metadata: { tier: 'queens', agentName: 'Source', soul: 'The Operator', agent_id: 'ag_src' },
+  }, { id: 'evt_invcreate_accrue' }));
+  assert.equal(accrued.status, 200);
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_invoice_ref, 'pi_invcreate_1', 'accrued on the intent');
+
+  // THE F1 CASE: Stripe's invoice_creation produced a post-purchase invoice, so the
+  // list DOES find one and resolveRef answers 'in_...' — a ref the rail never used.
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_post_purchase_1')] });
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_invcreate_1', amount: 24900, amountRefunded: 24900 }),
+    { id: 'evt_invcreate_refund' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.reversed, 2, 'the second look against the intent found the accruals');
+  // TWO rpc calls: the invoice ref (unknown), then the intent ref (known).
+  const calls = db.rpcCalls.filter((c) => c.fn === 'rail_reverse');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].args.p_invoice_ref, 'in_post_purchase_1');
+  assert.equal(calls[1].args.p_invoice_ref, 'pi_invcreate_1');
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
+  assert.equal(db.failures().length, 0, 'nothing was quarantined');
+});
+
+test('(qq2) F1 · a subscription refund takes the second look too, and still finds nothing', async () => {
+  const db = seed(); // no accrual at all, and the event is OLD so it records
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_unknown_9')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_unknown_9' }),
+    { id: 'evt_both_unknown', ageSeconds: 2 * 60 * 60 }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.known, false);
+  const calls = db.rpcCalls.filter((c) => c.fn === 'rail_reverse');
+  assert.equal(calls.length, 2, 'both refs were tried before giving up');
+  // the detail names BOTH refs, so a human is not left guessing which was checked
+  const row = db.failures('reversal_unresolved')[0];
+  assert.equal(row.detail.ref, 'in_unknown_9');
+  assert.equal(row.detail.second_ref, 'pi_unknown_9');
 });

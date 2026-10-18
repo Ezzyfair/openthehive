@@ -4,8 +4,34 @@
 -- Ruling R-A (Francis) · ticket NIK-RAIL-005 §5.
 --
 -- NOT RUN BY ANYONE UNTIL NIKITA HAS READ IT. Not by this session, not by a deploy,
--- not by prebuild. Francis runs it by hand after the staging refund proof, in the
--- SQL editor or with psql, and only then.
+-- not by prebuild. Francis runs it by hand after the staging refund proof, and only
+-- then.
+--
+-- PSQL ONLY — IT CANNOT RUN IN THE SUPABASE SQL EDITOR (chat-seat review F3). This
+-- file uses psql meta-commands and client-side variable interpolation: \set, \echo,
+-- and :'testbee1'. The SQL editor is not psql; it sends the buffer to the server,
+-- where a backslash command is a syntax error and :'name' is never substituted. The
+-- first line would fail. The three ids are psql variables BY DESIGN — hardcoding
+-- uuids into a file that deletes money rows is exactly what should not be reviewed
+-- once and then reused unchanged.
+--
+-- THE EXACT INVOCATION, with the three ids filled in:
+--
+--   psql "$SUPABASE_DB_URL" \
+--     -v testbee1='00000000-0000-0000-0000-000000000000' \
+--     -v testbee2='00000000-0000-0000-0000-000000000000' \
+--     -v testbee3='00000000-0000-0000-0000-000000000000' \
+--     -f supabase/scripts/rail_test_cleanup.sql
+--
+-- For a DRY RUN that shows the counts and writes nothing, add --single-transaction
+-- and let the final COMMIT be the only thing you change to ROLLBACK, or run it as:
+--
+--   psql "$SUPABASE_DB_URL" -v testbee1=... -v testbee2=... -v testbee3=... \
+--     -c '\set ON_ERROR_STOP on' \
+--     -f <(sed 's/^COMMIT;$/ROLLBACK;/' supabase/scripts/rail_test_cleanup.sql)
+--
+-- (That sed form is what this session used against the local scratch database; the
+-- counts print either way, because they are SELECTs inside the transaction.)
 --
 -- WHAT IT DELETES, and the three fences that keep it narrow:
 --   1. livemode = false ONLY, on every statement that CAN carry it — the three money
@@ -19,17 +45,14 @@
 --   3. One transaction, with the counts printed BEFORE the COMMIT, so the numbers can
 --      be read and the whole thing abandoned with ROLLBACK if they look wrong.
 --
--- HOW TO RUN IT — the variables are REQUIRED and the script refuses to run without
--- them (psql substitutes :'testbee1' as a literal; an unset variable raises):
+-- THE VARIABLES ARE REQUIRED. psql substitutes :'testbee1' as a quoted literal; an
+-- unset variable is left as the literal text :'testbee1', which fails the ::uuid cast
+-- and aborts the transaction before any DELETE. That is the intended behaviour —
+-- running this script without naming the three bees deletes nothing.
 --
---   psql "$SUPABASE_DB_URL" \
---     -v testbee1='<uuid>' -v testbee2='<uuid>' -v testbee3='<uuid>' \
---     -f supabase/scripts/rail_test_cleanup.sql
---
--- READ THE COUNTS, THEN DECIDE. The script ends with COMMIT. To inspect without
--- committing, run it with `-v ON_ERROR_STOP=1 --single-transaction` and a ROLLBACK,
--- or simply change the last line to ROLLBACK for a dry run — the counts are printed
--- either way.
+-- READ THE COUNTS, THEN DECIDE. The BEFORE block prints what is in scope, the four
+-- DELETEs run, and the AFTER block prints zeros — all inside one transaction, with
+-- COMMIT as the last line.
 --
 -- WHY payout_notices AND payouts ARE IN SCOPE: a test payout opens a payouts row and
 -- may write a payout_notices row; leaving the payouts row behind makes the next
