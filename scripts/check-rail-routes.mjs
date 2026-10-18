@@ -20,7 +20,12 @@
 //                 A .from('<money table>') chain carrying insert/update/upsert/
 //                 delete fails, anywhere under app/ or lib/, except lib/rail/**.
 //                 Reads are allowed; writes go through rail_accrue,
-//                 rail_open_payout and rail_close_payout.
+//                 rail_open_payout, rail_close_payout and rail_reverse.
+//   RULE D (R64)  every `.rpc(` name under app/ or lib/ is a string literal, and a
+//                 literal beginning `rail_` is one of those four. A computed name
+//                 fails: an unreadable money-function name is what the rule refuses.
+//                 Added by NIK-RAIL-005 because RULE C matches .from() chains only
+//                 and never saw an rpc at all.
 //
 // Run: node scripts/check-rail-routes.mjs
 // Exit 0 = clean. Exit 1 = a violation, printed with its file and line.
@@ -60,6 +65,21 @@ const WRITE_EXEMPT = new Map([]);
 // lib/rail/** is where the three functions are called from, so it is not a
 // violation for rail code to name a money table.
 const RAIL_LIB_PREFIX = 'lib/rail/';
+
+// ── RULE D · R60's second half, added by NIK-RAIL-005 ───────────────────────
+// R-H moved the reversal into a FOURTH database function rather than an UPDATE under
+// lib/rail/, which keeps RULE C at zero exemptions. The measure that produced that
+// ruling also found the hole it opens: RULE C matches `.from('<table>')` chains and
+// is BLIND to `.rpc(` entirely, so a write through any function name — reviewed or
+// not — passed silently. RULE D closes it by making the NAME checkable: every
+// rail_* rpc in app/ and lib/ must be a string literal from this list of four.
+// Non-rail_ names (the Antenna and token functions) are printed and allowed.
+const RAIL_RPC_ALLOWED = new Set([
+  'rail_accrue',
+  'rail_reverse',
+  'rail_open_payout',
+  'rail_close_payout',
+]);
 
 function walk(dir) {
   let out = [];
@@ -220,6 +240,47 @@ for (const tree of ['app', 'lib']) {
   }
 }
 
+// ── RULE D · every .rpc( name across app/ and lib/ ──────────────────────────
+// A non-literal first argument FAILS. `rpc(fnName, …)` cannot be checked by reading
+// the file, and an unreadable money-function name is exactly what this rule exists to
+// refuse — if it is computed, the guard has nothing to say about it, so it says no.
+const rpcSites = [];
+for (const tree of ['app', 'lib']) {
+  for (const file of walk(join(ROOT, tree)).filter(isSource)) {
+    const r = rel(file);
+    const src = blankComments(readFileSync(file, 'utf8'));
+    const re = /\.rpc\(\s*([^,)]*)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const line = src.slice(0, m.index).split('\n').length;
+      const raw = m[1].trim();
+      const lit = /^(['"])([A-Za-z0-9_]+)\1$/.exec(raw);
+      if (!lit) {
+        rpcSites.push({ where: `${r}:${line}`, name: raw || '(empty)', verdict: 'FAIL' });
+        failures.push({
+          where: `${r}:${line}`,
+          why: `.rpc( first argument is not a string literal (${raw || 'empty'}) — R64`,
+        });
+        continue;
+      }
+      const name = lit[2];
+      if (name.startsWith('rail_') && !RAIL_RPC_ALLOWED.has(name)) {
+        rpcSites.push({ where: `${r}:${line}`, name, verdict: 'FAIL' });
+        failures.push({
+          where: `${r}:${line}`,
+          why: `.rpc('${name}') is not one of the four rail functions — R60/R64`,
+        });
+        continue;
+      }
+      rpcSites.push({
+        where: `${r}:${line}`,
+        name,
+        verdict: name.startsWith('rail_') ? 'rail' : 'other',
+      });
+    }
+  }
+}
+
 // ── report ──────────────────────────────────────────────────────────────────
 console.log(`RULE A/B — money trees: ${MONEY_TREES.map((t) => t.join('/')).join(', ')}`);
 const width = Math.max(...checked.map((c) => c.where.length), 10);
@@ -245,6 +306,18 @@ for (const w of writeSites) {
   console.log(`  FAIL    ${w.where}  —  writes ${w.table} with .${w.verb}(`);
 }
 
+console.log(`\nRULE D — R60/R64: every .rpc( name across app/, lib/ (rail_* allow-list: ${[...RAIL_RPC_ALLOWED].join(', ')})`);
+if (rpcSites.length === 0) {
+  console.log('  (no rpc call site found)');
+}
+{
+  const w = Math.max(...rpcSites.map((x) => x.where.length), 10);
+  for (const x of rpcSites) {
+    const tag = x.verdict === 'FAIL' ? 'FAIL  ' : x.verdict === 'rail' ? 'ok    ' : 'other ';
+    console.log(`  ${tag}  ${x.where.padEnd(w)}  ${x.name}`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\ncheck-rail-routes: ${failures.length} violation(s).`);
   process.exit(1);
@@ -252,6 +325,8 @@ if (failures.length > 0) {
 console.log(
   `\ncheck-rail-routes: rule A clean (${routeCount} money route(s), four exports each); ` +
     `rule B clean (no direct Supabase or Stripe constructor); ` +
-    `rule C clean (R60: ${exemptions.length} exemption(s), printed above).`,
+    `rule C clean (R60: ${exemptions.length} exemption(s), printed above); ` +
+    `rule D clean (R64: ${rpcSites.filter((x) => x.verdict === 'rail').length} rail rpc call(s) ` +
+    `from the allow-list, ${rpcSites.filter((x) => x.verdict === 'other').length} other rpc name(s) printed).`,
 );
 process.exit(0);

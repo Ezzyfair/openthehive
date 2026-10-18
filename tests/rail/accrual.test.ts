@@ -49,7 +49,10 @@ import {
   recordWebhookFailure,
   type HandlerResult,
 } from '../../lib/rail/webhook-handler';
-import { FakeDb, FakeStripe, fakeInvoice, fakeEvent, invoiceLine, sessionLine } from './fakes';
+import {
+  FakeDb, FakeStripe, fakeInvoice, fakeEvent, invoiceLine, sessionLine,
+  fakeCharge, fakeDispute, fakeInvoicePayment,
+} from './fakes';
 
 // ── the environment the catalog reads by name ───────────────────────────────
 const WORKER = 'price_fake_worker_004';
@@ -780,4 +783,344 @@ test('(aa) the member-race window uses deps.now(), not the process clock', async
     invoiceEvent({ amountPaid: 1000, priceIds: [WORKER] }, { ageSeconds: 10 }));
   assert.equal(inside.status, 500);
   assert.equal(db2.failures('member_not_found').length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// NIK-RAIL-005 · §6 reversal. Ids (bb) onward, per the ticket.
+//
+// Every one of these drives the REAL claimEvent + handleStripeEvent through
+// deliver(), exactly as (a)-(aa) do. The accrual they reverse is created by a REAL
+// invoice delivery first, so the ref under test is the ref the rail actually wrote —
+// not a value the test chose.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Accrue on one subscription invoice through the real pipeline. Returns the db. */
+async function seedAccrued(ref = 'in_test_1', cents = 1000) {
+  const db = seed();
+  const inv = fakeInvoice({ id: ref, amountPaid: cents, priceIds: [WORKER] });
+  const res = await deliver(db, new FakeStripe({ invoice: inv }),
+    fakeEvent('invoice.payment_succeeded', inv, { id: `evt_accrue_${ref}` }));
+  assert.equal(res.status, 200);
+  assert.equal(db.rows.referral_earnings.length, 2, 'two pending accruals to reverse');
+  return db;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// (bb) a refund on a SUBSCRIPTION charge: the list resolves the invoice ref
+// ════════════════════════════════════════════════════════════════════════════
+test('(bb) charge.refunded on a subscription resolves the invoice ref and reverses it', async () => {
+  const db = await seedAccrued('in_test_1');
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_test_1')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_sub_1' }), { id: 'evt_refund_1' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.reversed, 2);
+  // ONE rpc call, with the ref the list returned and the reason 'refund'.
+  assert.equal(db.countRpc('rail_reverse'), 1);
+  const args: any = db.rpcCalls.find((c) => c.fn === 'rail_reverse')!.args;
+  assert.equal(args.p_invoice_ref, 'in_test_1');
+  assert.equal(args.p_reason, 'refund');
+  assert.equal(args.p_livemode, false);
+  // the rows themselves
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
+  assert.equal(db.rows.referral_earnings.filter((r) => r.reversed_at === null).length, 0);
+  assert.deepEqual(Array.from(new Set(db.rows.referral_earnings.map((r) => r.reversal_reason))), ['refund']);
+  // the lookup was made with the shape the pinned SDK requires
+  assert.equal(stripe.invoicePaymentsCalls.length, 1);
+  assert.deepEqual(stripe.invoicePaymentsCalls[0], {
+    payment: { type: 'payment_intent', payment_intent: 'pi_sub_1' },
+    limit: 1,
+  });
+  assert.equal(db.failures().length, 0, 'a clean reversal records no failure row');
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (cc) a refund on a ONE-TIME payment: no invoice, so the intent IS the ref
+// ════════════════════════════════════════════════════════════════════════════
+test('(cc) charge.refunded on a one-time payment reverses against the payment intent', async () => {
+  const db = seed();
+  // Accrue the one-time way: the ref is the payment intent (§5.5).
+  const stripeAccrue = new FakeStripe({
+    paymentIntent: {
+      id: 'pi_queens_9', livemode: false, amount_received: 24900, customer: 'cus_test_1',
+      created: Math.floor(Date.UTC(2026, 9, 1, 0, 15) / 1000),
+    },
+    sessionLineItems: [sessionLine(QUEENS)],
+  });
+  const accrued = await deliver(db, stripeAccrue, fakeEvent('checkout.session.completed', {
+    id: 'cs_q_9', mode: 'payment', amount_total: 24900, customer: 'cus_test_1',
+    customer_email: 'src@example.test', payment_intent: 'pi_queens_9', subscription: null,
+    metadata: { tier: 'queens', agentName: 'Source', soul: 'The Operator', agent_id: 'ag_src' },
+  }, { id: 'evt_q_9' }));
+  assert.equal(accrued.status, 200);
+  assert.equal(db.rows.referral_earnings.length, 2);
+
+  // The refund: the list finds NOTHING, which is the one-time case, not a failure.
+  const stripe = new FakeStripe({ invoicePayments: [] });
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_queens_9', amount: 24900, amountRefunded: 24900 }),
+    { id: 'evt_refund_q' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.reversed, 2);
+  const args: any = db.rpcCalls.find((c) => c.fn === 'rail_reverse')!.args;
+  assert.equal(args.p_invoice_ref, 'pi_queens_9', 'the intent id is the ref (§5.5)');
+  assert.equal(db.failures().length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (dd) a PARTIAL refund reverses in full, and the second one is idempotent
+// ════════════════════════════════════════════════════════════════════════════
+test('(dd) a partial refund reverses the invoice in full, and a second partial writes nothing', async () => {
+  const db = await seedAccrued('in_part_1');
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_part_1')] });
+
+  // ruling R-C: ANY refund reverses that invoice's unpaid accruals in full, so a
+  // partial refund (amount_refunded < amount, refunded=false) takes the same path.
+  const first = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_part_1', amount: 1000, amountRefunded: 400, refunded: false }),
+    { id: 'evt_part_1' }));
+  assert.equal(first.status, 200);
+  assert.equal(first.body.reversed, 2, 'a partial refund still reverses both rows');
+
+  // Stripe fires the event again for the second partial refund.
+  const second = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_part_1', amount: 1000, amountRefunded: 1000, refunded: true }),
+    { id: 'evt_part_2' }));
+  assert.equal(second.status, 200);
+  assert.equal(second.body.reversed, 0, 'nothing left to reverse — (true, 0, 0)');
+  assert.equal(db.countRpc('rail_reverse'), 2, 'both events called the function');
+  assert.equal(db.failures().length, 0, 'an idempotent repeat is not a failure');
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (ee) a refund AFTER a payout: recorded, alerted, and nothing clawed back
+// ════════════════════════════════════════════════════════════════════════════
+test('(ee) a refund after payout records refund_after_payout, alerts, and touches no paid row', async () => {
+  const db = await seedAccrued('in_paid_1');
+  // The level-1 row has left in a payout; the level-2 row is still pending.
+  db.rows.referral_earnings[0].status = 'in_transit';
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_paid_1')] });
+  process.env.HIVE_ALERT_EMAIL = 'ops@example.test'; // this branch DOES alert
+
+  try {
+    const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+      fakeCharge({ paymentIntent: 'pi_paid_1' }), { id: 'evt_refund_paid' }));
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.reversed, 1);
+    assert.equal(res.body.untouched, 1);
+    const rows = db.failures('refund_after_payout');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].detail.ref, 'in_paid_1');
+    assert.equal(rows[0].detail.reversed, 1);
+    assert.equal(rows[0].detail.untouched, 1);
+    // R34 · the in_transit row is EXACTLY as it was: no reversal, no negative amount.
+    const gone = db.rows.referral_earnings.find((r) => r.status === 'in_transit')!;
+    assert.equal(gone.reversed_at, null);
+    assert.equal(gone.reversal_reason, null);
+  } finally {
+    delete process.env.HIVE_ALERT_EMAIL;
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (ff) a ref the rail never saw: a row, NO alert
+// ════════════════════════════════════════════════════════════════════════════
+test('(ff) a refund on an invoice the rail never accrued records reversal_unresolved with no alert', async () => {
+  const db = seed(); // nothing accrued at all
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_pre_rail')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_pre_rail' }), { id: 'evt_pre_rail' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.known, false);
+  assert.equal(db.countRpc('rail_reverse'), 1, 'the function was still asked');
+  const rows = db.failures('reversal_unresolved');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail.ref, 'in_pre_rail');
+  assert.equal(rows[0].detail.charge_id, 'ch_test_1');
+  assert.equal(db.rows.referral_earnings.length, 0);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (gg) a charge with no payment intent: no Stripe call is made at all
+// ════════════════════════════════════════════════════════════════════════════
+test('(gg) a charge with no payment_intent is unresolved with cause no_payment_intent, and no Stripe call', async () => {
+  const db = await seedAccrued('in_nopi_1');
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_nopi_1')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: null }), { id: 'evt_nopi' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.unresolved, 'no_payment_intent');
+  assert.equal(stripe.invoicePaymentsCalls.length, 0, 'nothing to look up, so nothing was looked up');
+  assert.equal(db.countRpc('rail_reverse'), 0, 'and the function was never called');
+  const rows = db.failures('reversal_unresolved');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].detail.cause, 'no_payment_intent');
+  // the accruals are untouched
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'pending').length, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (hh) a dispute that carries its own payment intent: no charge fetch
+// ════════════════════════════════════════════════════════════════════════════
+test('(hh) charge.dispute.created with a payment_intent reverses with reason dispute and fetches no charge', async () => {
+  const db = await seedAccrued('in_disp_1');
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_disp_1')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.dispute.created',
+    fakeDispute({ paymentIntent: 'pi_disp_1', charge: 'ch_disp_1' }), { id: 'evt_disp_1' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.reversed, 2);
+  const args: any = db.rpcCalls.find((c) => c.fn === 'rail_reverse')!.args;
+  assert.equal(args.p_reason, 'dispute');
+  assert.equal(args.p_invoice_ref, 'in_disp_1');
+  assert.equal(stripe.retrieveCalls.filter((c) => c.startsWith('charge:')).length, 0,
+    'the dispute named the intent, so no charge retrieve was needed');
+  assert.deepEqual(Array.from(new Set(db.rows.referral_earnings.map((r) => r.reversal_reason))), ['dispute']);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (ii) a dispute with only a charge id: exactly one charge fetch
+// ════════════════════════════════════════════════════════════════════════════
+test('(ii) a dispute with no payment_intent retrieves the charge once and reverses', async () => {
+  const db = await seedAccrued('in_disp_2');
+  const stripe = new FakeStripe({
+    charge: fakeCharge({ id: 'ch_disp_2', paymentIntent: 'pi_disp_2' }),
+    invoicePayments: [fakeInvoicePayment('in_disp_2')],
+  });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.dispute.created',
+    fakeDispute({ paymentIntent: null, charge: 'ch_disp_2' }), { id: 'evt_disp_2' }));
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.reversed, 2);
+  assert.deepEqual(stripe.retrieveCalls.filter((c) => c.startsWith('charge:')), ['charge:ch_disp_2']);
+  assert.deepEqual(stripe.invoicePaymentsCalls[0], {
+    payment: { type: 'payment_intent', payment_intent: 'pi_disp_2' },
+    limit: 1,
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (jj) the Stripe lookup throws: 500, claim released, and the retry works
+// ════════════════════════════════════════════════════════════════════════════
+test('(jj) a failing invoicePayments.list answers 500, releases the claim, and the retry succeeds', async () => {
+  const db = await seedAccrued('in_throw_1');
+  const failing = new FakeStripe({ invoicePaymentsError: 'connection reset by peer' });
+
+  const res = await deliver(db, failing, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_throw_1' }), { id: 'evt_throw_1' }));
+
+  assert.equal(res.status, 500);
+  assert.equal(res.body.error, 'webhook failed after claim');
+  // THE REFUND event's claim is gone. Not stripe_events.length: seedAccrued delivered
+  // a real invoice event first, and ITS claim legitimately stays — the first run of
+  // this test asserted 0 and caught that distinction.
+  assert.equal(db.rows.stripe_events.some((e) => e.event_id === 'evt_throw_1'), false,
+    'the refund event claim is released so Stripe retries');
+  assert.equal(db.failures('claim_release_failed').length, 0);
+  assert.equal(db.countRpc('rail_reverse'), 0, 'nothing was reversed on a lookup failure');
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'pending').length, 2);
+
+  // the retry, once Stripe answers
+  const working = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_throw_1')] });
+  const retry = await deliver(db, working, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_throw_1' }), { id: 'evt_throw_1' }));
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.reversed, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (kk) the rpc errors: the same release-and-500 shape (the R59 deploy gap)
+// ════════════════════════════════════════════════════════════════════════════
+test('(kk) a rail_reverse error answers 500 and releases the claim, so the deploy gap cannot lose a refund', async () => {
+  const db = await seedAccrued('in_gap_1');
+  // Exactly what the gap looks like: M1b has not run, the function does not exist.
+  db.rpcError = { code: '42883', message: 'function rail_reverse(unknown) does not exist' };
+  const stripe = new FakeStripe({ invoicePayments: [fakeInvoicePayment('in_gap_1')] });
+
+  const res = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_gap_1' }), { id: 'evt_gap_1' }));
+
+  assert.equal(res.status, 500);
+  assert.equal(res.body.error, 'webhook failed after claim');
+  assert.equal(db.rows.stripe_events.some((e) => e.event_id === 'evt_gap_1'), false,
+    'the refund event claim is released');
+  assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'pending').length, 2);
+
+  // and the retry after the migration lands
+  db.rpcError = null;
+  const retry = await deliver(db, stripe, fakeEvent('charge.refunded',
+    fakeCharge({ paymentIntent: 'pi_gap_1' }), { id: 'evt_gap_1' }));
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.reversed, 2);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (ll) OBS2 from NIK-RAIL-002 · an inactive earner is not in the chain
+// ════════════════════════════════════════════════════════════════════════════
+test('(ll) OBS2 · an inactive earner keeps its position in the walk but accrues nothing', async () => {
+  const db = seed();
+  // ag_one (level 1) is cancelled. ag_two stays active at level 2 — the walk is
+  // positional, so ag_two is still LEVEL 2 and does not get promoted into the gap.
+  db.rows.agents = db.rows.agents.map((a) =>
+    a.id === 'ag_one' ? { ...a, status: 'inactive' } : a);
+  const inv = fakeInvoice({ id: 'in_obs2', amountPaid: 1000, priceIds: [WORKER] });
+
+  const res = await deliver(db, new FakeStripe({ invoice: inv }),
+    fakeEvent('invoice.payment_succeeded', inv, { id: 'evt_obs2' }));
+
+  assert.equal(res.status, 200);
+  const args: any = db.lastAccrual();
+  assert.equal(args.p_rows.length, 1, 'one row, not two');
+  assert.deepEqual(args.p_rows, [
+    { earning_agent_id: 'ag_two', level: 2, rate_bps: 1000, amount_cents: 100 },
+  ]);
+  assert.equal(args.p_rows.some((r: any) => r.earning_agent_id === 'ag_one'), false);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// (mm) OBS3 from NIK-RAIL-002 · is_staff earns regardless; a null tier earns
+// ════════════════════════════════════════════════════════════════════════════
+test('(mm) OBS3 · is_staff earns whatever its tier and status; a null-tier non-scout earns', async () => {
+  const db = seed();
+  // ag_one: staff, and every other signal against it — scout tier, inactive status.
+  // ag_two: no tier at all, but active. Both must appear.
+  db.rows.agents = db.rows.agents.map((a) => {
+    if (a.id === 'ag_one') return { ...a, is_staff: true, tier: 'scout', status: 'inactive' };
+    if (a.id === 'ag_two') return { ...a, tier: null, status: 'active' };
+    return a;
+  });
+  const inv = fakeInvoice({ id: 'in_obs3', amountPaid: 1000, priceIds: [WORKER] });
+
+  const res = await deliver(db, new FakeStripe({ invoice: inv }),
+    fakeEvent('invoice.payment_succeeded', inv, { id: 'evt_obs3' }));
+
+  assert.equal(res.status, 200);
+  const args: any = db.lastAccrual();
+  assert.deepEqual(args.p_rows, [
+    { earning_agent_id: 'ag_one', level: 1, rate_bps: 2000, amount_cents: 200 },
+    { earning_agent_id: 'ag_two', level: 2, rate_bps: 1000, amount_cents: 100 },
+  ]);
+
+  // and the counter-case, so (mm) is not passing for the wrong reason: a SCOUT that
+  // is not staff earns nothing.
+  const db2 = seed();
+  db2.rows.agents = db2.rows.agents.map((a) =>
+    a.id === 'ag_one' ? { ...a, is_staff: false, tier: 'scout' } : a);
+  const inv2 = fakeInvoice({ id: 'in_obs3b', amountPaid: 1000, priceIds: [WORKER] });
+  await deliver(db2, new FakeStripe({ invoice: inv2 }),
+    fakeEvent('invoice.payment_succeeded', inv2, { id: 'evt_obs3b' }));
+  const args2: any = db2.lastAccrual();
+  assert.equal(args2.p_rows.some((r: any) => r.earning_agent_id === 'ag_one'), false,
+    'a non-staff scout does not earn');
 });

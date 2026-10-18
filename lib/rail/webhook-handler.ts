@@ -32,6 +32,16 @@ import {
   type AccrualDb,
 } from '@/lib/rail/accrual';
 import { NON_MEMBERSHIP_REASON } from '@/lib/rail/catalog';
+import {
+  resolveRef,
+  disputeIntent,
+  chargePaymentIntentId,
+  disputeChargeId,
+  reverseForRef,
+  REVERSAL_UNRESOLVED_REASON,
+  REFUND_AFTER_PAYOUT_REASON,
+  type ReversalReason,
+} from '@/lib/rail/reversal';
 import { randomBytes } from 'node:crypto';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { canonicalTier } from '@/lib/tier';
@@ -654,6 +664,128 @@ export async function handleStripeEvent(
         return await failAfterClaim(supabase, event, 'payment_failed_update', failedErr);
       }
     }
+  }
+
+  // ── §6, §15 row 5 · REVERSAL: a refund or a dispute ───────────────────────
+  // THE FIFTH BLOCK (NIK-RAIL-005). Both events do the same three things — recover
+  // the ref, call rail_reverse, record what came back — so they share one tail and
+  // differ only in how they reach a payment intent.
+  //
+  // WHY A REF HAS TO BE RECOVERED AT ALL: a Charge carries no invoice field in the
+  // pinned api version, so the accrual's key is not on the event. resolveRef does
+  // the recovery; lib/rail/reversal.ts explains it.
+  //
+  // R33/R34 live in the function, not here: only 'pending' rows reverse, and nothing
+  // in_transit or paid is ever touched, debited or clawed back. This block cannot
+  // move money even if it is wrong about the ref — the worst it can do is reverse
+  // the wrong invoice's PENDING accruals, which is why resolveRef fails closed
+  // rather than guessing.
+  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {
+    const isRefund = event.type === 'charge.refunded';
+    const reason: ReversalReason = isRefund ? 'refund' : 'dispute';
+
+    // The charge id is carried only for the failure record, so a human reading a
+    // reversal_unresolved row can find the payment at Stripe.
+    let chargeId: string | null = null;
+    let intentId: string | null = null;
+
+    try {
+      if (isRefund) {
+        const charge = event.data.object as Stripe.Charge;
+        chargeId = charge.id ?? null;
+        intentId = chargePaymentIntentId(charge);
+      } else {
+        const dispute = event.data.object as Stripe.Dispute;
+        chargeId = disputeChargeId(dispute);
+        // disputeIntent retrieves the charge ONLY when the dispute carries no intent
+        // of its own (Disputes.d.ts:84 is nullable, :50 is not).
+        intentId = await disputeIntent(stripe, dispute);
+      }
+    } catch (e) {
+      // A Stripe read failed. Not an unresolved ref — ask again (R14, R59).
+      return await failAfterClaim(supabase, event, 'reversal_charge_lookup', e);
+    }
+
+    let outcome;
+    try {
+      outcome = await resolveRef(stripe, { paymentIntentId: intentId });
+    } catch (e) {
+      return await failAfterClaim(supabase, event, 'reversal_resolve_ref', e);
+    }
+
+    if ('unresolved' in outcome) {
+      // §6 · a row, NO alert — information, like non_membership_payment. A charge
+      // with no payment intent, or an invoice payment naming no invoice, is nothing
+      // a retry changes.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REVERSAL_UNRESOLVED_REASON,
+        detail: { cause: outcome.unresolved, charge_id: chargeId, intent_id: intentId },
+      });
+      console.log('reversal: ref unresolved', {
+        event_id: event.id, cause: outcome.unresolved, charge: chargeId,
+      });
+      return json({ received: true, unresolved: outcome.unresolved });
+    }
+
+    const reversal = await reverseForRef(supabase, {
+      ref: outcome.ref,
+      reason,
+      livemode: event.livemode,
+    });
+
+    if (!reversal.ok) {
+      // NEVER SWALLOWED. In the deploy gap where this code is live and M1b has not
+      // run, rail_reverse does not exist and this errors; the 500 is what makes
+      // Stripe retry until the function is there (R59).
+      return await failAfterClaim(supabase, event, 'rail_reverse', reversal.error);
+    }
+
+    const { known, reversed, untouched } = reversal.result;
+
+    if (!known) {
+      // The rail never accrued on this ref: a pre-rail invoice, a non-membership
+      // payment, or a ref we recovered wrongly. A row, no alert.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REVERSAL_UNRESOLVED_REASON,
+        detail: { ref: outcome.ref, event_type: event.type, charge_id: chargeId },
+      });
+      console.log('reversal: ref unknown to the rail', {
+        event_id: event.id, ref: outcome.ref,
+      });
+      return json({ received: true, known: false });
+    }
+
+    if (untouched > 0) {
+      // §6 ruling 6, R35 · money that has left, or is leaving, cannot be reversed
+      // here — and a human has to know. This one DOES alert.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REFUND_AFTER_PAYOUT_REASON,
+        detail: { ref: outcome.ref, reversed, untouched, reason },
+      });
+      await alertQuarantine(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        session_id: outcome.ref,
+        received: `${reversed} reversed, ${untouched} already in_transit or paid`,
+        reason: REFUND_AFTER_PAYOUT_REASON,
+      });
+      console.warn('reversal: refund after payout', {
+        event_id: event.id, ref: outcome.ref, reversed, untouched,
+      });
+      return json({ received: true, reversed, untouched });
+    }
+
+    console.log('reversal:', {
+      event_id: event.id, ref: outcome.ref, reason, reversed,
+      livemode: event.livemode,
+    });
+    return json({ received: true, reversed });
   }
 
   return json({ received: true });
