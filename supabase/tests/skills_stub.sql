@@ -19,10 +19,16 @@
 -- primary key, and in particular it does NOT put a UNIQUE index on slug or on
 -- sort_order. A scratch run against it therefore proves that the migration's SQL is
 -- valid and that its values land in the right columns with the right types — it does
--- NOT prove the INSERT will be accepted by production, where a UNIQUE index on
--- sort_order would reject it (see the forward migration's note on sort_order 11).
--- Inventing constraints here would make the scratch run look like it proved more than
--- it does.
+-- NOT prove the INSERT will be accepted by production, where a UNIQUE index on an
+-- unconstrained-looking column could still reject it. Inventing constraints here
+-- would make the scratch run look like it proved more than it does.
+--
+-- V1.2 NOTE: that caveat used to matter sharply, because the first build inserted
+-- sort_order 11 — digital-wallet-mastery's slot — and this stub could not say whether
+-- production would refuse it. Ruling (b) moved the new row to 40, the first value no
+-- row in the Oct 18 readout holds, so the two no longer contend. The pre-existing row
+-- below still carries 11, because that is what the readout says Getting Paid holds;
+-- it is now a neighbour rather than a collision.
 -- ----------------------------------------------------------------------------
 
 DROP TABLE IF EXISTS skills CASCADE;
@@ -49,8 +55,9 @@ CREATE TABLE skills (
 );
 
 -- One pre-existing row, so the scratch run is not inserting into an empty table and
--- the guard has something to scan past. It is the PAIRED skill from the readout,
--- including its sort_order 11 — which is what makes the collision visible here.
+-- the guard has something to scan past. It is the PAIRED skill from the readout, with
+-- the sort_order 11 that the readout gives it — the slot the first build wrongly
+-- reused and v1.2 vacated.
 INSERT INTO skills (slug, name, description, pillar, difficulty,
                     mastery_pollen_reward, tags, content_markdown,
                     first_flight, mandatory, premium, featured, sort_order,
