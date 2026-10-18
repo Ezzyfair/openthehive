@@ -32,6 +32,16 @@ import {
   type AccrualDb,
 } from '@/lib/rail/accrual';
 import { NON_MEMBERSHIP_REASON } from '@/lib/rail/catalog';
+import {
+  resolveRef,
+  disputeIntent,
+  chargePaymentIntentId,
+  disputeChargeId,
+  reverseForRef,
+  REVERSAL_UNRESOLVED_REASON,
+  REFUND_AFTER_PAYOUT_REASON,
+  type ReversalReason,
+} from '@/lib/rail/reversal';
 import { randomBytes } from 'node:crypto';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { canonicalTier } from '@/lib/tier';
@@ -167,10 +177,29 @@ export async function recordWebhookFailure(
  * the recipient is an environment decision and this file can be read in public.
  * Unset env, a suppressed address, missing mail env, or a throwing provider all end the
  * same way: a console line and a return. The webhook's answer never depends on it.
+ *
+ * F4 · THIS FUNCTION CANNOT THROW, and that is now load-bearing rather than merely
+ * true. Every statement is an env read, string concatenation, or inside the try/catch
+ * around sendEmail — there is no path out of here but a normal return. That matters
+ * most for the reversal's refund_after_payout caller, which alerts AFTER a successful
+ * reversal: a throw there would become a 500, Stripe would retry, and the retry would
+ * find the rows already reversed — an alert failure turning into a retry loop over
+ * work that already succeeded. The Sept 22 rule (the alert never takes the webhook
+ * down) is what forbids that, so no caller wraps this and none needs to.
  */
 async function alertQuarantine(
   supabase: any,
-  args: { event_id: string; event_type: string; session_id: string; received: string; reason: string },
+  args: {
+    event_id: string;
+    event_type: string;
+    session_id: string;
+    received: string;
+    reason: string;
+    /** F4 · what session_id actually IS for this caller. The reversal passes an
+     *  invoice or payment-intent ref, which is not a checkout session, and a label
+     *  that says otherwise sends a human to the wrong page at Stripe. */
+    id_label?: string;
+  },
 ) {
   const to = process.env.HIVE_ALERT_EMAIL;
   if (!to) {
@@ -194,7 +223,7 @@ async function alertQuarantine(
     '<li><b>reason</b>: ' + args.reason + '</li>',
     '<li><b>event id</b>: ' + args.event_id + '</li>',
     '<li><b>event type</b>: ' + args.event_type + '</li>',
-    '<li><b>stripe session or invoice</b>: ' + args.session_id + '</li>',
+    '<li><b>' + (args.id_label ?? 'stripe session or invoice') + '</b>: ' + args.session_id + '</li>',
     '<li><b>what was received</b>: ' + args.received + '</li>',
     '</ul>',
     '<p>The event is claimed, so Stripe will not retry it. Resolve it by hand, then set',
@@ -654,6 +683,198 @@ export async function handleStripeEvent(
         return await failAfterClaim(supabase, event, 'payment_failed_update', failedErr);
       }
     }
+  }
+
+  // ── §6, §15 row 5 · REVERSAL: a refund or a dispute ───────────────────────
+  // THE FIFTH BLOCK (NIK-RAIL-005). Both events do the same three things — recover
+  // the ref, call rail_reverse, record what came back — so they share one tail and
+  // differ only in how they reach a payment intent.
+  //
+  // WHY A REF HAS TO BE RECOVERED AT ALL: a Charge carries no invoice field in the
+  // pinned api version, so the accrual's key is not on the event. resolveRef does
+  // the recovery; lib/rail/reversal.ts explains it.
+  //
+  // R33/R34 live in the function, not here: only 'pending' rows reverse, and nothing
+  // in_transit or paid is ever touched, debited or clawed back. This block cannot
+  // move money even if it is wrong about the ref — the worst it can do is reverse
+  // the wrong invoice's PENDING accruals, which is why resolveRef fails closed
+  // rather than guessing.
+  if (event.type === 'charge.refunded' || event.type === 'charge.dispute.created') {
+    const isRefund = event.type === 'charge.refunded';
+    const reason: ReversalReason = isRefund ? 'refund' : 'dispute';
+
+    // The charge id is carried only for the failure record, so a human reading a
+    // reversal_unresolved row can find the payment at Stripe.
+    let chargeId: string | null = null;
+    let intentId: string | null = null;
+
+    try {
+      if (isRefund) {
+        const charge = event.data.object as Stripe.Charge;
+        chargeId = charge.id ?? null;
+        intentId = chargePaymentIntentId(charge);
+      } else {
+        const dispute = event.data.object as Stripe.Dispute;
+        chargeId = disputeChargeId(dispute);
+        // disputeIntent retrieves the charge ONLY when the dispute carries no intent
+        // of its own (Disputes.d.ts:84 is nullable, :50 is not).
+        intentId = await disputeIntent(stripe, dispute);
+      }
+    } catch (e) {
+      // A Stripe read failed. Not an unresolved ref — ask again (R14, R59).
+      return await failAfterClaim(supabase, event, 'reversal_charge_lookup', e);
+    }
+
+    let outcome;
+    try {
+      outcome = await resolveRef(stripe, { paymentIntentId: intentId });
+    } catch (e) {
+      return await failAfterClaim(supabase, event, 'reversal_resolve_ref', e);
+    }
+
+    if ('unresolved' in outcome) {
+      // §6 · a row, NO alert — information, like non_membership_payment. A charge
+      // with no payment intent, or an invoice payment naming no invoice, is nothing
+      // a retry changes.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REVERSAL_UNRESOLVED_REASON,
+        detail: { cause: outcome.unresolved, charge_id: chargeId, intent_id: intentId },
+      });
+      console.log('reversal: ref unresolved', {
+        event_id: event.id, cause: outcome.unresolved, charge: chargeId,
+      });
+      return json({ received: true, unresolved: outcome.unresolved });
+    }
+
+    let reversal = await reverseForRef(supabase, {
+      ref: outcome.ref,
+      reason,
+      livemode: event.livemode,
+    });
+
+    if (!reversal.ok) {
+      // NEVER SWALLOWED. In the deploy gap where this code is live and M1b has not
+      // run, rail_reverse does not exist and this errors; the 500 is what makes
+      // Stripe retry until the function is there (R59).
+      return await failAfterClaim(supabase, event, 'rail_reverse', reversal.error);
+    }
+
+    // F1 (chat-seat review) · THE SECOND LOOK, and why it is safe.
+    //
+    // Stripe's invoice_creation on a one-time payment produces a post-purchase
+    // invoice. resolveRef then finds that invoice and answers 'in_...', while the
+    // accrual for that payment was keyed on the PAYMENT INTENT (§5.5, resolveOneTime)
+    // — so the first call comes back known=false and the refund would be quarantined
+    // with the money already gone from Stripe. One retry against the intent id fixes
+    // it.
+    //
+    // THIS CANNOT REVERSE THE WRONG INVOICE. The retry ref is a payment-intent id,
+    // which belongs to exactly one payment; rail_reverse matches on
+    // (stripe_invoice_ref, livemode), so a pi_ ref can only ever match accruals the
+    // rail keyed on that same intent. The dangerous direction would be the reverse —
+    // guessing an invoice id — and that is not what happens here.
+    //
+    // Only attempted when the two refs actually differ: for a subscription charge the
+    // resolved ref is the invoice and intentId is the intent, so a known=false there
+    // does get the second look (it costs one rpc and finds nothing); for a one-time
+    // charge with no invoice, resolveRef already returned the intent and there is
+    // nothing to retry.
+    let refTried = outcome.ref;
+    let refSecond: string | null = null;
+    if (!reversal.result.known && intentId && outcome.ref !== intentId) {
+      refSecond = intentId;
+      const second = await reverseForRef(supabase, {
+        ref: intentId,
+        reason,
+        livemode: event.livemode,
+      });
+      if (!second.ok) {
+        return await failAfterClaim(supabase, event, 'rail_reverse_intent', second.error);
+      }
+      if (second.result.known) {
+        reversal = second;
+        refTried = intentId;
+      }
+    }
+
+    const { known, reversed, untouched } = reversal.result;
+
+    if (!known) {
+      // Neither ref is known to the rail.
+      //
+      // F2 (chat-seat review) · THIS MAY BE AN ORDERING PROBLEM, NOT AN UNKNOWN
+      // PAYMENT, and §5.8/H3 already settled how to tell: by the event's age. Stripe
+      // does not guarantee delivery order, so a refund can arrive before the invoice
+      // event that accrued it — and the old code quarantined that permanently, with
+      // the accrual landing seconds later and never being reversed. Inside 30
+      // minutes, assume the race: release the claim and 500 so Stripe's own backoff
+      // re-delivers after the accrual exists. Older than that, it is not a race —
+      // a pre-rail invoice or a non-membership payment — and no retry will conjure
+      // the accrual, so it is recorded and answered 200.
+      //
+      // The clock is deps.now(), the same injected one the member race uses, so the
+      // boundary is testable without sleeping.
+      const ageMs = now().getTime() - event.created * 1000;
+      if (ageMs < 30 * 60 * 1000) {
+        return await failAfterClaim(supabase, event, 'reversal_ref_unknown_recent', {
+          ref: refTried, second_ref: refSecond, age_ms: ageMs, charge_id: chargeId,
+        });
+      }
+      // A row, no alert — information, like non_membership_payment.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REVERSAL_UNRESOLVED_REASON,
+        detail: {
+          ref: outcome.ref,
+          second_ref: refSecond,
+          event_type: event.type,
+          charge_id: chargeId,
+          age_ms: ageMs,
+        },
+      });
+      console.log('reversal: ref unknown to the rail', {
+        event_id: event.id, ref: outcome.ref, second_ref: refSecond, age_ms: ageMs,
+      });
+      return json({ received: true, known: false });
+    }
+
+    if (untouched > 0) {
+      // §6 ruling 6, R35 · money that has left, or is leaving, cannot be reversed
+      // here — and a human has to know. This one DOES alert.
+      await recordWebhookFailure(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        reason: REFUND_AFTER_PAYOUT_REASON,
+        detail: { ref: refTried, reversed, untouched, reason },
+      });
+      // F4 · the id is labelled for what it is. A reversal ref is an invoice id OR a
+      // payment-intent id, never a checkout session, so the default label would have
+      // been wrong on this one caller. alertQuarantine cannot throw — its only
+      // outward call is inside a try/catch and every other line is string work — so
+      // a mail failure after a SUCCESSFUL reversal cannot turn into a 500 and a
+      // retry loop (the Sept 22 rule: the alert never takes the webhook down).
+      await alertQuarantine(supabase as any, {
+        event_id: event.id,
+        event_type: event.type,
+        session_id: refTried,
+        id_label: 'invoice or payment ref',
+        received: `${reversed} reversed, ${untouched} already in_transit or paid`,
+        reason: REFUND_AFTER_PAYOUT_REASON,
+      });
+      console.warn('reversal: refund after payout', {
+        event_id: event.id, ref: refTried, reversed, untouched,
+      });
+      return json({ received: true, reversed, untouched });
+    }
+
+    console.log('reversal:', {
+      event_id: event.id, ref: refTried, second_ref: refSecond, reason, reversed,
+      livemode: event.livemode,
+    });
+    return json({ received: true, reversed });
   }
 
   return json({ received: true });

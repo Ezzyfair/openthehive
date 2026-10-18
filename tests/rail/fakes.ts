@@ -34,6 +34,12 @@ export class FakeDb {
     agents: [],
     honeycombs: [],
     messages: [],
+    // NIK-RAIL-005 · the two the rail functions write. No handler code touches them
+    // (R60/R-H), so nothing in the fake's from() path reaches them either; they are
+    // here because railAccrue and railReverse keep their state where a test can read
+    // it — db.rows.referral_earnings is how an assertion sees a reversal.
+    referral_earnings: [],
+    hive_revenue: [],
   };
   calls: Call[] = [];
 
@@ -181,15 +187,98 @@ export class FakeDb {
   rpc(fn: string, args: Record<string, unknown>) {
     this.rpcCalls.push({ fn, args });
     if (this.rpcError) return Promise.resolve({ data: null, error: this.rpcError });
-    if (fn !== 'rail_accrue') return Promise.resolve({ data: null, error: null });
+
+    if (fn === 'rail_accrue') return this.railAccrue(args);
+    if (fn === 'rail_reverse') return this.railReverse(args);
+
+    // NIK-RAIL-005 · AN UNKNOWN NAME THROWS, and that is the point. Until this
+    // commit any name but rail_accrue returned { data: null, error: null } — a silent
+    // success — so a test against a function the fake knew nothing about passed
+    // without exercising anything. The measure called that out as the one fixture
+    // gap. Now a new money function has to be taught here before a test can claim it
+    // works.
+    throw new Error(
+      `FakeDb.rpc: no behaviour defined for '${fn}'. Teach the fake this function ` +
+        `before asserting against it — a silent success is how a test passes for free.`,
+    );
+  }
+
+  /** rail_accrue: p_rows.length the first time a ref is seen, 0 on a replay. */
+  private railAccrue(args: Record<string, unknown>) {
     const ref = String(args.p_invoice_ref);
     if (this.accrued.has(ref)) {
       // The replay: rail_accrue's ON CONFLICT on hive_revenue wrote nothing.
       return Promise.resolve({ data: 0, error: null });
     }
     this.accrued.add(ref);
-    const rows = (args.p_rows as unknown[]) ?? [];
+    const rows = (args.p_rows as any[]) ?? [];
+    // The revenue row IS the claim (F1), and `known` below is read from it — so the
+    // fake writes it, exactly as the real function does.
+    this.rows.hive_revenue = this.rows.hive_revenue ?? [];
+    this.rows.hive_revenue.push({
+      stripe_invoice_ref: ref,
+      livemode: args.p_livemode,
+      source_agent_id: args.p_source_agent,
+      source_amount_cents: args.p_source_cents,
+      period_month: args.p_period_month,
+    });
+    this.rows.referral_earnings = this.rows.referral_earnings ?? [];
+    for (const r of rows) {
+      this.rows.referral_earnings.push({
+        stripe_invoice_ref: ref,
+        livemode: args.p_livemode,
+        earning_agent_id: r.earning_agent_id,
+        level: r.level,
+        rate_bps: r.rate_bps,
+        amount_cents: r.amount_cents,
+        status: 'pending',
+        reversed_at: null,
+        reversal_reason: null,
+      });
+    }
     return Promise.resolve({ data: rows.length, error: null });
+  }
+
+  /**
+   * rail_reverse, with M1b's semantics over the fake's own rows:
+   *   known     — a hive_revenue row for (ref, livemode) exists
+   *   reversed  — pending rows moved to 'reversed' with reversed_at and the reason
+   *   untouched — rows already 'in_transit' or 'paid', left exactly as they are
+   * Returns an ARRAY of one row, because the real function RETURNS TABLE.
+   */
+  private railReverse(args: Record<string, unknown>) {
+    const ref = String(args.p_invoice_ref);
+    const livemode = args.p_livemode;
+    const reason = String(args.p_reason);
+
+    // The real function raises 22023 on these; the fake answers with the same error
+    // shape the client would see, so the handler's error path is exercised.
+    if (!ref || ref.trim() === '' || (reason !== 'refund' && reason !== 'dispute')) {
+      return Promise.resolve({
+        data: null,
+        error: { code: '22023', message: 'rail_reverse: invalid argument' },
+      });
+    }
+
+    const all = (this.rows.referral_earnings ?? []).filter(
+      (r) => r.stripe_invoice_ref === ref && r.livemode === livemode,
+    );
+    const known = (this.rows.hive_revenue ?? []).some(
+      (r) => r.stripe_invoice_ref === ref && r.livemode === livemode,
+    );
+
+    let reversed = 0;
+    for (const r of all) {
+      if (r.status === 'pending') {
+        r.status = 'reversed';
+        r.reversed_at = new Date().toISOString();
+        r.reversal_reason = reason;
+        reversed++;
+      }
+    }
+    const untouched = all.filter((r) => r.status === 'in_transit' || r.status === 'paid').length;
+
+    return Promise.resolve({ data: [{ known, reversed, untouched }], error: null });
   }
 
   // ── what the assertions read ──────────────────────────────────────────────
@@ -223,6 +312,16 @@ export interface FakeStripeOpts {
   sessionLineItems?: any[];
   /** Make every retrieve throw, for the R14 'resolve' stage. */
   retrieveError?: string;
+  // ── NIK-RAIL-005 · the reversal path ──
+  /** What invoicePayments.list returns. Default: an EMPTY list, i.e. a one-time
+   *  payment, which §5.5 says makes the payment intent itself the ref. */
+  invoicePayments?: any[];
+  /** Make invoicePayments.list throw — a retry signal, not an unresolved ref. */
+  invoicePaymentsError?: string;
+  /** What charges.retrieve returns, for a dispute that carries no payment intent. */
+  charge?: any;
+  /** Make charges.retrieve throw. */
+  chargeError?: string;
 }
 
 export class FakeStripe {
@@ -232,6 +331,8 @@ export class FakeStripe {
    * NOT passed, so the stub has to keep the whole call, not just the id.
    */
   retrieveArgs: Array<{ call: string; params: unknown }> = [];
+  /** Every params object invoicePayments.list was called with (NIK-RAIL-005). */
+  invoicePaymentsCalls: any[] = [];
   constructor(public opts: FakeStripeOpts = {}) {}
 
   invoices = {
@@ -258,6 +359,31 @@ export class FakeStripe {
         this.retrieveCalls.push(`lineitems:${id}`);
         return { data: this.opts.sessionLineItems ?? [] };
       },
+    },
+  };
+
+  /**
+   * NIK-RAIL-005 · the invoice-payment lookup resolveRef uses. The whole params
+   * object is recorded, because a test has to assert the SHAPE the pinned SDK
+   * requires — `payment.type` is mandatory (InvoicePayments.d.ts:124), and a call
+   * that omitted it would be a 400 at Stripe, not a local type error.
+   */
+  invoicePayments = {
+    list: async (params?: any) => {
+      this.retrieveCalls.push('invoicePayments.list');
+      this.invoicePaymentsCalls.push(params);
+      if (this.opts.invoicePaymentsError) throw new Error(this.opts.invoicePaymentsError);
+      return { data: this.opts.invoicePayments ?? [] };
+    },
+  };
+
+  /** The charge fetch a dispute needs only when it carries no payment intent. */
+  charges = {
+    retrieve: async (id: string, params?: unknown) => {
+      this.retrieveCalls.push(`charge:${id}`);
+      this.retrieveArgs.push({ call: `charge:${id}`, params });
+      if (this.opts.chargeError) throw new Error(this.opts.chargeError);
+      return this.opts.charge;
     },
   };
 }
@@ -304,11 +430,58 @@ export const fakeInvoice = (o: {
 export const fakeEvent = (
   type: string,
   object: unknown,
-  o?: { id?: string; ageSeconds?: number },
+  o?: { id?: string; ageSeconds?: number; livemode?: boolean },
 ) =>
   ({
     id: o?.id ?? 'evt_test_1',
     type,
     created: Math.floor(Date.now() / 1000) - (o?.ageSeconds ?? 10),
+    // EventBase.livemode (Events.d.ts:43). The reversal path passes it straight to
+    // rail_reverse as p_livemode, where it is half the key, so a fixture that omitted
+    // it would silently reverse in the wrong mode — i.e. find nothing.
+    livemode: o?.livemode ?? false,
     data: { object },
   }) as any;
+
+// ── NIK-RAIL-005 builders ───────────────────────────────────────────────────
+
+/** A Charge as charge.refunded carries it (Charges.d.ts:51). */
+export const fakeCharge = (o: {
+  id?: string;
+  paymentIntent?: string | { id: string } | null;
+  amount?: number;
+  amountRefunded?: number;
+  refunded?: boolean;
+}) => ({
+  id: o.id ?? 'ch_test_1',
+  object: 'charge',
+  amount: o.amount ?? 1000,
+  amount_refunded: o.amountRefunded ?? 1000,
+  refunded: o.refunded ?? true,
+  payment_intent: o.paymentIntent === undefined ? 'pi_test_1' : o.paymentIntent,
+});
+
+/** A Dispute as charge.dispute.created carries it (Disputes.d.ts:30). */
+export const fakeDispute = (o: {
+  id?: string;
+  charge?: string | { id: string };
+  paymentIntent?: string | { id: string } | null;
+  amount?: number;
+  reason?: string;
+}) => ({
+  id: o.id ?? 'dp_test_1',
+  object: 'dispute',
+  amount: o.amount ?? 1000,
+  charge: o.charge ?? 'ch_test_1',
+  payment_intent: o.paymentIntent === undefined ? null : o.paymentIntent,
+  reason: o.reason ?? 'fraudulent',
+  status: 'needs_response',
+});
+
+/** An InvoicePayment row as invoicePayments.list returns it (InvoicePayments.d.ts:18). */
+export const fakeInvoicePayment = (invoice: string | { id: string } | null) => ({
+  id: 'inpay_test_1',
+  object: 'invoice_payment',
+  invoice,
+  status: 'paid',
+});
