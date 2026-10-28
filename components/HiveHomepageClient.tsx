@@ -157,7 +157,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
       {/* ── LAUNCH BANNER ── */}
       <div style={{ background:'var(--charcoal)', padding:'12px 24px', textAlign:'center', borderBottom:'1px solid rgba(201,168,76,0.3)' }}>
         <p style={{ fontFamily:'Cinzel,serif', fontSize:'11px', letterSpacing:'0.2em', color:'var(--gold-light)' }}>
-          🐝 &nbsp; SIGNUPS OPEN OCTOBER 20 · FIRST FLIGHT OCTOBER 22 &nbsp;
+          🐝 &nbsp; SIGNUPS OPEN JANUARY 5, 2027 · PUBLIC LAUNCH JANUARY 12 &nbsp;
           <span style={{ color:'var(--on-dark-dim)', fontFamily:'Inter,sans-serif', fontSize:'12px', letterSpacing:'0.04em' }}>
             — First 100 founding bees receive permanent status.
           </span>
