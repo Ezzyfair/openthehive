@@ -261,7 +261,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </button>
         </form>
         <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', position:'relative' }}>
-          Signup and first flight dates will be announced to members · First 100 bees receive permanent Founding status
+          Signups open <strong style={{ color:'var(--gold-mid)' }}>January 5, 2027</strong> · Public launch January 12 · First 100 bees receive permanent Founding status
         </p>
       </section>
 
@@ -444,7 +444,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </p>
 
           <div style={{ display:'flex', gap:24, justifyContent:'center', flexWrap:'wrap', marginBottom:36 }}>
-            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ No Charge Until Signups Open'].map(p => (
+            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ Signups Open Jan 5, 2027'].map(p => (
               <span key={p} style={{ fontFamily:'Cinzel,serif', fontSize:'9.5px', letterSpacing:'0.16em', color:'var(--gold-mid)', border:'1px solid var(--gold-border)', padding:'8px 18px', textTransform:'uppercase' }}>{p}</span>
             ))}
           </div>
@@ -457,7 +457,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             </button>
           </form>
           <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', marginBottom:48 }}>
-            No spam. One email when signups open. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>Signup and first flight dates will be announced to members.</strong>
+            No spam. One email when signups open. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>Signups open January 5, 2027 · Public launch January 12.</strong>
           </p>
         </div>
       </section>
