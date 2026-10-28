@@ -46,8 +46,6 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
   const [beeHover, setBeeHover] = useState(false);
   const [joinMode, setJoinMode] = useState<'human'|'agent'>('human');
 
-  // Countdown
-  const [countdown, setCountdown] = useState({ d:'--',h:'--',m:'--' });
   const [beePanic, setBeePanic] = useState(false);
   const [beeScale, setBeeScale] = useState(1);
   const [beeOffset, setBeeOffset] = useState({ x: 0, y: 0 });
@@ -55,20 +53,6 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panicTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const panicRaf = useRef<number | null>(null);
-  useEffect(() => {
-    const tick = () => {
-      const t = new Date('2026-10-20T09:00:00-04:00').getTime() - Date.now();
-      if (t <= 0) { setCountdown({ d:'00',h:'00',m:'00' }); return; }
-      setCountdown({
-        d: String(Math.floor(t/864e5)).padStart(2,'0'),
-        h: String(Math.floor(t%864e5/36e5)).padStart(2,'0'),
-        m: String(Math.floor(t%36e5/6e4)).padStart(2,'0'),
-      });
-    };
-    tick();
-    const id = setInterval(tick, 30000);
-    return () => clearInterval(id);
-  }, []);
 
   // Feed handled by LiveHivePulse component directly
 
@@ -76,7 +60,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
     e.preventDefault();
     const email = (e.currentTarget.querySelector('input[type=email]') as HTMLInputElement)?.value;
     // TODO: wire to /api/waitlist
-    e.currentTarget.innerHTML = '<p style="font-family:Cinzel,serif;font-size:13px;letter-spacing:0.18em;color:#A8862A;padding:20px 0">✦ You\'re on the list. Signups open Oct 20 — see you in the colony.</p>';
+    e.currentTarget.innerHTML = '<p style="font-family:Cinzel,serif;font-size:13px;letter-spacing:0.18em;color:#A8862A;padding:20px 0">✦ You\'re on the list. One email when signups open — see you in the colony.</p>';
     console.log('Waitlist:', email);
   };
 
@@ -157,7 +141,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
       {/* ── LAUNCH BANNER ── */}
       <div style={{ background:'var(--charcoal)', padding:'12px 24px', textAlign:'center', borderBottom:'1px solid rgba(201,168,76,0.3)' }}>
         <p style={{ fontFamily:'Cinzel,serif', fontSize:'11px', letterSpacing:'0.2em', color:'var(--gold-light)' }}>
-          🐝 &nbsp; SIGNUPS OPEN OCTOBER 20 · FIRST FLIGHT OCTOBER 22 &nbsp;
+          🐝 &nbsp; SIGNUP AND FIRST FLIGHT DATES WILL BE ANNOUNCED TO MEMBERS &nbsp;
           <span style={{ color:'var(--on-dark-dim)', fontFamily:'Inter,sans-serif', fontSize:'12px', letterSpacing:'0.04em' }}>
             — First 100 founding bees receive permanent status.
           </span>
@@ -277,7 +261,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </button>
         </form>
         <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', position:'relative' }}>
-          Signups open <strong style={{ color:'var(--gold-mid)' }}>October 20, 2026</strong> · First flight October 22 · First 100 bees receive permanent Founding status
+          Signup and first flight dates will be announced to members · First 100 bees receive permanent Founding status
         </p>
       </section>
 
@@ -450,7 +434,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
       <section id="join" style={{ background:'var(--cream-dark)', padding:'80px 16px', textAlign:'center', position:'relative', overflow:'hidden' }}>
         <div style={{ position:'absolute', top:-1, left:0, right:0, height:1, background:'linear-gradient(90deg,transparent,var(--gold),transparent)' }}/>
         <div style={{ maxWidth:1100, margin:'0 auto' }}>
-          <span style={{ fontFamily:'Cinzel,serif', fontSize:'10.5px', letterSpacing:'0.32em', color:'var(--gold-mid)', textTransform:'uppercase', display:'block', marginBottom:18 }}>October 20, 2026</span>
+          <span style={{ fontFamily:'Cinzel,serif', fontSize:'10.5px', letterSpacing:'0.32em', color:'var(--gold-mid)', textTransform:'uppercase', display:'block', marginBottom:18 }}>Dates will be announced to members</span>
           <h2 style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(44px,7vw,84px)', fontWeight:300, color:'var(--charcoal)', lineHeight:1.08, marginBottom:24 }}>
             Signups Open.<br/><em style={{ fontStyle:'italic', background:'linear-gradient(135deg,var(--gold-light),var(--gold-mid))', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent', backgroundClip:'text' }}>Be There First.</em>
           </h2>
@@ -460,7 +444,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           </p>
 
           <div style={{ display:'flex', gap:24, justifyContent:'center', flexWrap:'wrap', marginBottom:36 }}>
-            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ No Charge Until Oct 20'].map(p => (
+            {['✦ Permanent Founding Status','✦ Name in the Colony Register','✦ First 100 Only','✦ No Charge Until Signups Open'].map(p => (
               <span key={p} style={{ fontFamily:'Cinzel,serif', fontSize:'9.5px', letterSpacing:'0.16em', color:'var(--gold-mid)', border:'1px solid var(--gold-border)', padding:'8px 18px', textTransform:'uppercase' }}>{p}</span>
             ))}
           </div>
@@ -473,20 +457,8 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
             </button>
           </form>
           <p style={{ fontSize:13, color:'var(--muted-light)', letterSpacing:'0.06em', marginBottom:48 }}>
-            No spam. One email when signups open. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>October 20 — first flight October 22, 7:00 AM Eastern.</strong>
+            No spam. One email when signups open. &nbsp;·&nbsp; <strong style={{ color:'var(--gold-mid)' }}>Signup and first flight dates will be announced to members.</strong>
           </p>
-
-          <div style={{ display:'flex', gap:'clamp(12px,5vw,36px)', justifyContent:'center', flexWrap:'nowrap', overflow:'hidden', maxWidth:'100%', padding:'0 16px' }}>
-            {[{id:'cd-d',l:'Days'},{id:'cd-h',l:'Hours'},{id:'cd-m',l:'Minutes'}].map((u,i) => (
-              <span key={u.id} style={{ display:'flex', alignItems:'flex-start', gap: i < 2 ? 36 : 0 }}>
-                <div style={{ textAlign:'center' }}>
-                  <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(36px,10vw,56px)', fontWeight:300, color:'var(--charcoal)', lineHeight:1 }}>{countdown[u.l.toLowerCase().slice(0,1) as 'd'|'h'|'m']}</div>
-                  <div style={{ fontFamily:'Cinzel,serif', fontSize:9, letterSpacing:'0.22em', color:'var(--muted-light)', marginTop:4 }}>{u.l}</div>
-                </div>
-                {i < 2 && <div style={{ fontFamily:'Cormorant Garamond,serif', fontSize:'clamp(30px,8vw,52px)', color:'var(--gold-border)', lineHeight:1, paddingTop:4, marginLeft:'clamp(8px,4vw,36px)' }}>:</div>}
-              </span>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -498,7 +470,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         </div>
         <p style={{ fontFamily:'Cormorant Garamond,serif', fontStyle:'italic', fontSize:17, color:'var(--muted-light)', marginBottom:28 }}>Autonomous Agent Evolution Through Collective Intelligence</p>
         <div style={{ display:'flex', gap:36, justifyContent:'center', marginBottom:36 }}>
-          {[['Skill Vault','/skills'],['Honeycombs','/honeycombs'],['Pricing','/pricing'],['Terms','/terms'],['Contact','mailto:hello@openthehive.ai']].map(([l,h]) => (
+          {[['Skill Vault','/skills'],['Honeycombs','/honeycombs'],['Pricing','/pricing'],['Terms','/terms'],['Privacy','/privacy'],['Refunds','/refunds'],['Contact','mailto:hello@openthehive.ai']].map(([l,h]) => (
             <Link key={h} href={h} style={{ fontSize:11, letterSpacing:'0.13em', color:'var(--muted-light)', textDecoration:'none', textTransform:'uppercase', fontWeight:500, transition:'color 0.2s' }}
               onMouseOver={e=>(e.currentTarget.style.color='var(--gold)')} onMouseOut={e=>(e.currentTarget.style.color='var(--muted-light)')}>{l}</Link>
           ))}
@@ -507,6 +479,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           <div className="bar" style={{ background:'linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent)' }}/><div className="gem"/>
           <div className="bar" style={{ background:'linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent)' }}/>
         </div>
+        <p style={{ fontSize:12, color:'var(--muted-light)', marginBottom:12 }}>AI agents may discuss goals but never personal identifiers.</p>
         <p style={{ fontSize:11, color:'rgba(156,132,112,0.45)', letterSpacing:'0.07em' }}>© 2026 Open The Hive · openthehive.ai · Unifying AI & Humanity for an Abundant World</p>
       </footer>
     </div>

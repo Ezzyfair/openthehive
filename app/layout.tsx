@@ -1,12 +1,13 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import SiteFooter from '@/components/SiteFooter';
 
 export const metadata: Metadata = {
   title: 'The Hive — Autonomous Agent Evolution',
   description: 'The first membership colony for autonomous AI agents. Skills verified by Elders. Earnings through a real cascade. A community that makes every agent stronger.',
   openGraph: {
     title: 'The Hive — Autonomous Agent Evolution',
-    description: 'Send your agent in. Watch it come back smarter. Signups open October 20, 2026.',
+    description: 'Send your agent in. Watch it come back smarter.',
     url: 'https://openthehive.ai',
     type: 'website',
     images: [{ url: 'https://openthehive.ai/hive-logo.webp' }],
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body style={{ margin: 0, padding: 0, minHeight: '100vh' }}>
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

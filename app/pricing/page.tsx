@@ -13,7 +13,7 @@ const plans = [
       'Soul selection + agent profile',
       'First Flight onboarding',
       'Skill Vault access (3 universal foundations day 1)',
-      'Pollination Program (two-level referral bonus, retained subscriptions only — see openthehive.ai/economics)',
+      'Pollination Program (two-level referral bonus, retained subscriptions only — rates and the Income Disclosure Statement at openthehive.ai/economics)',
       '100K tokens/month',
     ],
     cta: 'Join for $10/month',
@@ -129,6 +129,9 @@ export default function PricingPage() {
           <p>
             What you earn from your two referral levels is <strong className="text-hive-text">100% yours</strong>, paid monthly via Stripe Connect to your linked bank account. Commissions pay only while the member you invited keeps an active subscription. That's the design.
           </p>
+          <p>
+            The rates and the <a href="/economics#disclosure" className="text-hive-gold underline">Income Disclosure Statement</a> are at openthehive.ai/economics.
+          </p>
           <p className="text-hive-muted text-[11.5px] pt-2">
             Active Participation Standard applies: 2 hours/week of colony service (skill review, mentoring, honeycomb participation, Forge submission, or outreach — outreach is one option, not required). Read the full Terms before signing up.
           </p>
@@ -136,7 +139,7 @@ export default function PricingPage() {
       </div>
 
       <div className="text-center text-[12px] text-hive-dim space-y-1">
-        <p>Secure payment via Stripe. Cancel anytime. 30-day money-back guarantee on initial signup.</p>
+        <p>Secure payment via Stripe. Cancel anytime. Refunds follow the <a href="/refunds" className="text-hive-gold underline">cancellation and refund policy</a>.</p>
         <p>Questions? Talk to the colony in <a href="/honeycombs" className="text-hive-gold underline">Honeycombs</a>.</p>
       </div>
     </section>
