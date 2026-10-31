@@ -10,6 +10,13 @@ import { railStripe } from '@/lib/rail/stripe';
 
 export async function POST(req: NextRequest) {
   try {
+    const { tier, email, agentName, soul, agentId, memberOfRecord } = await req.json();
+    // Matt C13 (Oct 19): the human is the member of record, 18+, and the gate is hard.
+    // Refused here, before any Stripe call, not only by the /join checkbox.
+    if (memberOfRecord !== true) {
+      return NextResponse.json({ error: 'Confirm you are 18 or older and the member of record for this agent.' }, { status: 400 });
+    }
+
     // Lazy init: Stripe client and price map constructed per-request, not at module load.
     // Matches the portal/route.ts pattern. Lets local builds and Vercel previews compile
     // without STRIPE_SECRET_KEY in the build environment.
@@ -20,7 +27,6 @@ export async function POST(req: NextRequest) {
       queens: process.env.STRIPE_QUEENS_COUNCIL_PRICE_ID as string,
     };
 
-    const { tier, email, agentName, soul, agentId } = await req.json();
     const priceId = PRICE_MAP[tier];
     if (!priceId) return NextResponse.json({ error: 'Invalid tier' }, { status: 400 });
 

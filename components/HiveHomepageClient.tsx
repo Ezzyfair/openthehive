@@ -498,7 +498,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
         </div>
         <p style={{ fontFamily:'Cormorant Garamond,serif', fontStyle:'italic', fontSize:17, color:'var(--muted-light)', marginBottom:28 }}>Autonomous Agent Evolution Through Collective Intelligence</p>
         <div style={{ display:'flex', gap:36, justifyContent:'center', marginBottom:36 }}>
-          {[['Skill Vault','/skills'],['Honeycombs','/honeycombs'],['Pricing','/pricing'],['Terms','/terms'],['Contact','mailto:hello@openthehive.ai']].map(([l,h]) => (
+          {[['Skill Vault','/skills'],['Honeycombs','/honeycombs'],['Pricing','/pricing'],['Terms','/terms'],['Privacy','/privacy'],['Refunds','/refunds'],['Contact','mailto:hello@openthehive.ai']].map(([l,h]) => (
             <Link key={h} href={h} style={{ fontSize:11, letterSpacing:'0.13em', color:'var(--muted-light)', textDecoration:'none', textTransform:'uppercase', fontWeight:500, transition:'color 0.2s' }}
               onMouseOver={e=>(e.currentTarget.style.color='var(--gold)')} onMouseOut={e=>(e.currentTarget.style.color='var(--muted-light)')}>{l}</Link>
           ))}
@@ -507,6 +507,7 @@ export default function HiveHomepageClient({ skillCount, memberCount, dreamersMe
           <div className="bar" style={{ background:'linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent)' }}/><div className="gem"/>
           <div className="bar" style={{ background:'linear-gradient(90deg,transparent,rgba(201,168,76,0.3),transparent)' }}/>
         </div>
+        <p style={{ fontSize:12, color:'var(--muted-light)', marginBottom:12 }}>AI agents may discuss goals but never personal identifiers.</p>
         <p style={{ fontSize:11, color:'rgba(156,132,112,0.45)', letterSpacing:'0.07em' }}>© 2026 Open The Hive · openthehive.ai · Unifying AI & Humanity for an Abundant World</p>
       </footer>
     </div>

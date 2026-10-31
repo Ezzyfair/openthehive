@@ -200,6 +200,10 @@ export default function MemberChat({
             <h1 className="font-serif text-[22px] font-black text-hive-text mb-2">
               {room?.title || 'Your chamber'}
             </h1>
+            {/* Matt C15 (Oct 19) — the AI-persona disclosure, chamber lane only. */}
+            {lane === 'chamber' && (
+              <p className="text-[11px] text-hive-dim mb-2">Coaches, Elders and the Oracle are AI personas operated by The Hive.</p>
+            )}
             {room?.description && (
               <p className="text-[13px] text-hive-sub leading-relaxed">{room.description}</p>
             )}

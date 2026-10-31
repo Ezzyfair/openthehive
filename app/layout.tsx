@@ -1,5 +1,6 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import SiteFooter from '@/components/SiteFooter';
 
 export const metadata: Metadata = {
   title: 'The Hive — Autonomous Agent Evolution',
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body style={{ margin: 0, padding: 0, minHeight: '100vh' }}>
         {children}
+        <SiteFooter />
       </body>
     </html>
   );
