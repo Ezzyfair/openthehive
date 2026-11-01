@@ -17,6 +17,8 @@ import { useEffect, useRef, useState } from 'react';
 interface Props {
   /** True once the bee's status is 'active'. The false -> true edge fires the confetti. */
   graduated: boolean;
+  /** The chamber id. The confetti fires once for it, on the first open after graduation. */
+  onceKey?: string | null;
 }
 
 const COLORS = ['#E2C46A','#C9A84C','#F2EDE4','#1E1610','#E2C46A','#C9A84C'];
@@ -59,47 +61,47 @@ function fireWave(canvas: HTMLCanvasElement) {
   draw();
 }
 
-export default function ConfettiGraduation({ graduated }: Props) {
+/** MEMBER-001 R5 — true once per chamber, in this browser. Unreadable storage is a no. */
+function firstOpen(onceKey: string): boolean {
+  const key = `hive_graduation_confetti:${onceKey}`;
+  try {
+    if (localStorage.getItem(key)) return false;
+    localStorage.setItem(key, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export default function ConfettiGraduation({ graduated, onceKey }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [show, setShow] = useState(false);
   const firedRef = useRef(false);
 
   useEffect(() => {
-    // The EDGE, not the value: fires once when graduated first becomes true, so a view
+    // The EDGE, not the value: decided once when graduated first becomes true, so a view
     // that keeps polling a graduated bee does not re-fire the confetti every 5 s.
-    if (!graduated || firedRef.current) return;
+    if (!graduated || !onceKey || firedRef.current) return;
     firedRef.current = true;
-    setShow(true);
-    {
-      {
-        // Three waves 3s apart
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        fireWave(canvas);
-        setTimeout(() => fireWave(canvas), 3000);
-        setTimeout(() => fireWave(canvas), 6000);
-        // Play graduation sound if audio enabled
-        try {
-          const ctx = new AudioContext();
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.frequency.setValueAtTime(523, ctx.currentTime);
-          osc.frequency.setValueAtTime(659, ctx.currentTime + 0.15);
-          osc.frequency.setValueAtTime(784, ctx.currentTime + 0.3);
-          osc.frequency.setValueAtTime(1047, ctx.currentTime + 0.5);
-          gain.gain.setValueAtTime(0.3, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-          osc.start(ctx.currentTime);
-          osc.stop(ctx.currentTime + 1.5);
-        } catch(e) { /* audio not available */ }
-        // Hide after 8s
-        setTimeout(() => setShow(false), 8000);
-      }
-    }
-  }, [graduated]);
+    if (firstOpen(onceKey)) setShow(true);
+  }, [graduated, onceKey]);
+
+  // Its own effect, after the render that mounts the canvas. MEMBER-001 R5: this used to
+  // run beside setShow(true), found no canvas, and returned, so nothing ever painted.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!show || !canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    // Three waves 3s apart, then gone.
+    fireWave(canvas);
+    const timers = [
+      setTimeout(() => fireWave(canvas), 3000),
+      setTimeout(() => fireWave(canvas), 6000),
+      setTimeout(() => setShow(false), 8000),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, [show]);
 
   if (!show) return null;
   // MEMBER-001 item 7 — the confetti only. The GRADUATED words used to be a fixed

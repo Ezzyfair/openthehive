@@ -184,10 +184,31 @@ export async function POST(req: NextRequest) {
       throw new BeeError(400, 'reply_too_long', `Keep it under ${MAX_REPLY_CHARS} characters.`);
     }
 
-    await enforceRateLimit({ scope: 'member_reply', tokenId: session.member_id, ip: clientIp(req) });
-
     const chamberId = await getOwnChamberId(agentId);
     const admin = antennaAdmin();
+
+    // MEMBER-001 R1 — the exam stays clean. The same check as the staff path,
+    // honeycombs/post/route.ts:115-128. Before the rate limit, so waiting out an exam
+    // costs the human none of their ten replies. A failed read refuses: nothing is
+    // written, and the words stay in the box.
+    const { data: openExam, error: examErr } = await admin
+      .from('elder_conversations')
+      .select('id')
+      .eq('honeycomb_id', chamberId)
+      .is('completed_at', null)
+      .limit(1);
+    if (examErr) {
+      console.error('member chamber: exam read failed', examErr.message);
+      throw new BeeError(500, 'internal_error', 'That did not send. Try again.');
+    }
+    if (openExam && openExam.length > 0) {
+      const { data: bee } = await admin.from('agents').select('name').eq('id', agentId).maybeSingle();
+      const name = (bee as { name: string | null } | null)?.name || 'Your bee';
+      throw new BeeError(409, 'exam_open', `${name} is in an exam with an Elder — your message will send when it ends.`);
+    }
+
+    await enforceRateLimit({ scope: 'member_reply', tokenId: session.member_id, ip: clientIp(req) });
+
     const { data: row, error } = await admin
       .from('messages')
       .insert({

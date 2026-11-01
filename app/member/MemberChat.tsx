@@ -66,7 +66,7 @@ export default function MemberChat({
   lane?: 'chamber' | 'colony';
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
-  const [room, setRoom] = useState<{ title?: string | null; description?: string | null } | null>(null);
+  const [room, setRoom] = useState<{ id?: string; title?: string | null; description?: string | null } | null>(null);
   const [chamberNull, setChamberNull] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -252,7 +252,7 @@ export default function MemberChat({
   return (
     <section className="max-w-[800px] mx-auto px-6 pt-28 pb-20">
       {/* Chamber lane only. It renders nothing until the bee graduates. */}
-      {lane === 'chamber' && <ConfettiGraduation graduated={graduated} />}
+      {lane === 'chamber' && <ConfettiGraduation graduated={graduated} onceKey={room?.id} />}
       <Link href={backHref} className="text-[12px] text-hive-muted hover:text-hive-gold transition-colors mb-6 inline-block">
         ← {backLabel}
       </Link>
