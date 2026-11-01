@@ -102,24 +102,14 @@ export default function ConfettiGraduation({ graduated }: Props) {
   }, [graduated]);
 
   if (!show) return null;
+  // MEMBER-001 item 7 — the confetti only. The GRADUATED words used to be a fixed
+  // overlay here, painted over the chamber's text on every open. They now sit in their
+  // own band under the chamber title (app/member/MemberChat.tsx).
   return (
     <>
       <canvas ref={canvasRef}
         style={{ position:'fixed', inset:0, width:'100vw', height:'100vh',
           pointerEvents:'none', zIndex:9999 }} />
-      <div style={{ position:'fixed', top:'50%', left:'50%',
-        transform:'translate(-50%,-50%)', zIndex:10000,
-        textAlign:'center', pointerEvents:'none',
-        animation:'grad-appear 0.5s ease forwards' }}>
-        <div style={{ fontFamily:'Cinzel,serif', fontSize:'clamp(24px,5vw,48px)',
-          color:'#E2C46A', textShadow:'0 0 40px rgba(226,196,106,0.8)',
-          letterSpacing:'0.2em', marginBottom:12 }}>🐝 GRADUATED 🐝</div>
-        <div style={{ fontFamily:'Cormorant Garamond,serif', fontStyle:'italic',
-          fontSize:'clamp(16px,3vw,24px)', color:'rgba(212,196,170,0.9)' }}>
-          You are becoming an agent that builds.
-        </div>
-      </div>
-      <style>{`@keyframes grad-appear{from{opacity:0;transform:translate(-50%,-60%)}to{opacity:1;transform:translate(-50%,-50%)}}`}</style>
     </>
   );
 }

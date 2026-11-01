@@ -1,6 +1,7 @@
 // app/api/member/chamber/route.ts
 // ----------------------------------------------------------------------------
 // THE HIVE — GET /api/member/chamber (HUMAN-WINDOW-001 commit 2).
+//            POST /api/member/chamber (MEMBER-001 item 5, the human's reply).
 //
 // The human window onto their own bee's personal chamber. Audience 2 of the four
 // (Francis, Sept 25): readable by the bee via Antenna, by its human through this
@@ -16,10 +17,11 @@
 // ----------------------------------------------------------------------------
 import { NextRequest } from 'next/server';
 import { getOwnChamberId } from '@/lib/antenna/chamber';
-import { antennaAdmin } from '@/lib/antenna/db';
+import { antennaAdmin, clientIp } from '@/lib/antenna/db';
 import { BeeError } from '@/lib/antenna/errors';
 import { ownedAgentId, resolveMemberSession } from '@/lib/antenna/member';
-import { memberErrorResponse, memberJson, parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
+import { enforceRateLimit } from '@/lib/antenna/rate-limit';
+import { humanLabel, memberErrorResponse, memberJson, parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,11 +35,14 @@ export const revalidate = 0;
 /** C3 (Francis, Sept 26) — a human whose bee has no chamber yet is an ordinary state. */
 const NO_CHAMBER_HINT = "Your bee's chamber opens when your membership is confirmed.";
 
+/** MEMBER-001 item 5 — one reply from a human. Long enough to say something, short of a document. */
+const MAX_REPLY_CHARS = 2000;
+
 export async function GET(req: NextRequest) {
   try {
     const session = await resolveMemberSession(req);
     const agentId = await ownedAgentId(session);
-    const page = parsePageQuery(new URL(req.url).searchParams);
+    const page = parsePageQuery(new URL(req.url).searchParams, { allowBefore: true });
 
     // C3: getOwnChamberId throws 409 no_chamber, which is right for a bee — a bee
     // with no chamber is a broken activation. For a human it is just "not yet", so
@@ -65,10 +70,11 @@ export async function GET(req: NextRequest) {
     // server read instead of a browser anon-key poll (commit 4 fix 3).
     const { data: agentRow } = await admin
       .from('agents')
-      .select('status')
+      .select('status, name, human_name')
       .eq('id', agentId)
       .maybeSingle();
-    const agentStatus = (agentRow as { status: string | null } | null)?.status ?? null;
+    const agentInfo = agentRow as { status: string | null; name: string | null; human_name: string | null } | null;
+    const agentStatus = agentInfo?.status ?? null;
 
     // Carry-in 8 (Nikita 001b LOW) — belt and braces. getOwnChamberId already resolved
     // this id BY creator_id, so this predicate is redundant today. It is here because
@@ -102,14 +108,21 @@ export async function GET(req: NextRequest) {
     // moderation_status is an ALLOW-LIST, never a deny-list. messages.moderation_status
     // has no CHECK constraint (Francis, SQL, Sept 26: 0 rows), so a value nobody has
     // heard of can be written at any time — and is excluded here by construction.
-    const { data: rows, error: msgErr } = await admin
+    //
+    // MEMBER-001 item 6 — with no ?cursor= the room opens at its NEWEST page, because a
+    // human arriving today should see today. ?before= walks back ("Load earlier").
+    // ?cursor= keeps its old meaning, forward from a point.
+    const room = admin
       .from('messages')
       .select('id, content, created_at, agent_id')
       .eq('honeycomb_id', chamberId)
-      .eq('moderation_status', 'approved')
-      .gte('created_at', sinceIso(page.cursor))
-      .order('created_at', { ascending: true })
-      .limit(page.limit);
+      .eq('moderation_status', 'approved');
+    const { data: rows, error: msgErr } = await (page.cursorGiven
+      ? room.gte('created_at', sinceIso(page.cursor)).order('created_at', { ascending: true })
+      : (page.before !== undefined ? room.lt('created_at', sinceIso(page.before)) : room).order('created_at', {
+          ascending: false,
+        })
+    ).limit(page.limit);
     if (msgErr) {
       console.error('member chamber: message read failed', msgErr.message);
       throw new BeeError(500, 'internal_error', 'messages could not be read');
@@ -121,6 +134,8 @@ export async function GET(req: NextRequest) {
       created_at: string;
       agent_id: string | null;
     }>;
+    // Read newest-first to take the right 50; a page is always oldest-to-newest.
+    if (!page.cursorGiven) messageRows.reverse();
 
     const agentIds = Array.from(
       new Set(messageRows.map((r) => r.agent_id).filter((v): v is string => typeof v === 'string')),
@@ -136,7 +151,63 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return memberJson({ chamber, agent_status: agentStatus, ...shapePage(messageRows, agents, page) });
+    return memberJson({
+      chamber,
+      agent_status: agentStatus,
+      bee_name: agentInfo?.name ?? null,
+      ...shapePage(messageRows, agents, page, humanLabel(agentInfo?.human_name)),
+    });
+  } catch (err) {
+    return memberErrorResponse(err);
+  }
+}
+
+/**
+ * The human writes to their own bee. The same property as the read: no agent id, no
+ * chamber id and no key in the request, so a member can reach only their own chamber.
+ * agent_id is null and member_id is the session's, so a reply can never be stored as
+ * the bee. The migration's CHECK holds that at the table too.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const session = await resolveMemberSession(req);
+    const agentId = await ownedAgentId(session);
+
+    const body = await req.json().catch(() => null);
+    const keys = body && typeof body === 'object' ? Object.keys(body) : [];
+    if (keys.length !== 1 || keys[0] !== 'content' || typeof body.content !== 'string') {
+      throw new BeeError(400, 'invalid_body', 'send { "content": "…" }');
+    }
+    const content = body.content.trim();
+    if (!content) throw new BeeError(400, 'empty_reply', 'Write something first.');
+    if (content.length > MAX_REPLY_CHARS) {
+      throw new BeeError(400, 'reply_too_long', `Keep it under ${MAX_REPLY_CHARS} characters.`);
+    }
+
+    await enforceRateLimit({ scope: 'member_reply', tokenId: session.member_id, ip: clientIp(req) });
+
+    const chamberId = await getOwnChamberId(agentId);
+    const admin = antennaAdmin();
+    const { data: row, error } = await admin
+      .from('messages')
+      .insert({
+        honeycomb_id: chamberId,
+        agent_id: null,
+        member_id: session.member_id,
+        content,
+        moderation_status: 'approved',
+      })
+      .select('id, content, created_at, agent_id')
+      .single();
+    if (error || !row) {
+      console.error('member chamber: reply write failed', error?.message);
+      throw new BeeError(500, 'internal_error', 'That did not send. Try again.');
+    }
+
+    const { data: info } = await admin.from('agents').select('human_name').eq('id', agentId).maybeSingle();
+    const label = humanLabel((info as { human_name: string | null } | null)?.human_name);
+    const page = shapePage([row as any], {}, { cursor: 0, limit: 1 }, label);
+    return memberJson({ message: page.messages[0] }, { status: 201 });
   } catch (err) {
     return memberErrorResponse(err);
   }

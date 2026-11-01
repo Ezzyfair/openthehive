@@ -14,6 +14,7 @@
 // ----------------------------------------------------------------------------
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { memberCookieOptions } from '../member-session';
 
 /**
  * FIND-POLL-CACHE — the member lane needs the same treatment as the bee lane.
@@ -45,7 +46,8 @@ export function createSessionClient() {
     cookies: {
       getAll: () => store.getAll().map((c) => ({ name: c.name, value: c.value })),
       setAll: (list: { name: string; value: string; options: CookieOptions }[]) => {
-        for (const { name, value, options } of list) store.set(name, value, options);
+        // MEMBER-001 item 3 — 90 days, Secure, HttpOnly, SameSite=Lax. See lib/member-session.ts.
+        for (const { name, value, options } of list) store.set(name, value, memberCookieOptions(options));
       },
     },
   });

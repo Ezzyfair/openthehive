@@ -63,6 +63,8 @@ export interface ChatMessage {
   from_emoji: string | null;
   posted_at: string;
   content: string;
+  /** MEMBER-001 item 5 — a human's own post. */
+  from_kind?: 'human';
 }
 
 /** The locked copy, in one place so every surface says the same thing (item 2). */

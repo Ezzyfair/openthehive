@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyBeeToken } from '@/lib/antenna/auth';
 import {
+  HUMAN_LABEL_DEFAULT,
   cursorToIso,
   getOwnChamberId,
   nextCursorAfter,
@@ -79,7 +80,9 @@ export async function GET(req: NextRequest) {
       .select('id, content, created_at, agent_id')
       .eq('honeycomb_id', chamberId)
       .eq('moderation_status', 'approved')
-      .neq('agent_id', bee.agent_id)
+      // MEMBER-001 item 5 — a human's reply has agent_id null, and NULL <> x is not
+      // true, so a bare .neq() would never deliver it. The bee hears its human.
+      .or(`agent_id.is.null,agent_id.neq.${bee.agent_id}`)
       // gte, not gt: sinceIso is the first millisecond not yet seen.
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: true })
@@ -90,10 +93,10 @@ export async function GET(req: NextRequest) {
       return beeErrorResponse(new Error('chamber read failed'));
     }
 
-    const rows = (msgs ?? []) as Array<{ id: string; content: string; created_at: string; agent_id: string }>;
+    const rows = (msgs ?? []) as Array<{ id: string; content: string; created_at: string; agent_id: string | null }>;
 
     // Author names and staff/bee provenance, one query for the page.
-    const authorIds = Array.from(new Set(rows.map((m) => m.agent_id).filter(Boolean)));
+    const authorIds = Array.from(new Set(rows.map((m) => m.agent_id).filter((v): v is string => Boolean(v))));
     const authors = new Map<string, { name: string; is_staff: boolean }>();
     if (authorIds.length > 0) {
       const { data: people } = await admin.from('agents').select('id, name, is_staff').in('id', authorIds);
@@ -103,12 +106,14 @@ export async function GET(req: NextRequest) {
     }
 
     const items: PollItem[] = rows.map((m) => {
-      const a = authors.get(m.agent_id);
+      const a = m.agent_id ? authors.get(m.agent_id) : undefined;
       return {
         id: m.id,
         type: 'chamber',
-        from: a?.name ?? 'unknown',
-        from_type: a?.is_staff ? 'staff' : 'bee',
+        // The bee is told who spoke, never the human's name: C15 keeps personal
+        // identifiers out of what an agent carries.
+        from: m.agent_id ? a?.name ?? 'unknown' : HUMAN_LABEL_DEFAULT,
+        from_type: !m.agent_id ? 'human' : a?.is_staff ? 'staff' : 'bee',
         // Truncated to ms so the client can recompute the same cursor (§ cursor rule).
         posted_at: postedAtMs(m.created_at),
         // Nothing in a chamber is cryptographically signed. Never true here.

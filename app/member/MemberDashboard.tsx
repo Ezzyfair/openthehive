@@ -509,6 +509,15 @@ export default function MemberDashboard({ email }: { email: string }) {
           on the machine so you can see what happened, with the token replaced by the word "revoked".
         </p>
       </section>
+
+      {/* MEMBER-001 item 3. A form, not a link: signing out is a POST. */}
+      <footer style={{ marginTop: 40, fontSize: 13 }}>
+        <form method="post" action="/auth/member/signout">
+          <button type="submit" style={{ background: 'none', border: 'none', padding: 0, textDecoration: 'underline', cursor: 'pointer', color: 'inherit' }}>
+            Sign out
+          </button>
+        </form>
+      </footer>
     </main>
   );
 }

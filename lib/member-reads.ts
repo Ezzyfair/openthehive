@@ -13,7 +13,7 @@
 // imports that contract and adds nothing to it. One rule, one place.
 // ----------------------------------------------------------------------------
 import { NextResponse } from 'next/server';
-import { cursorToIso, nextCursorAfter, postedAtMs } from './antenna/chamber';
+import { HUMAN_LABEL_DEFAULT, cursorToIso, nextCursorAfter, postedAtMs } from './antenna/chamber';
 import { BeeError, beeErrorResponse } from './antenna/errors';
 
 /** Page size. 50 is the ruling; a caller may ask for less, never more. */
@@ -23,6 +23,10 @@ export const DEFAULT_LIMIT = 50;
 export interface PageRequest {
   cursor: number;
   limit: number;
+  /** True when the caller sent ?cursor=. Absent, the chamber opens at the newest page. */
+  cursorGiven?: boolean;
+  /** ?before= (chamber only): epoch ms, exclusive. "Load earlier". */
+  before?: number;
 }
 
 /**
@@ -34,14 +38,16 @@ export interface PageRequest {
  * /api/bee/poll requires it because a bee always has one in hive.json; a human
  * opening a page for the first time has nothing to send.
  */
-export function parsePageQuery(params: URLSearchParams): PageRequest {
+export function parsePageQuery(params: URLSearchParams, opts?: { allowBefore?: boolean }): PageRequest {
   const keys: string[] = [];
   // forEach, not for...of: the repo targets es5 and iterating URLSearchParams
   // directly needs --downlevelIteration.
   params.forEach((_v, k) => {
     keys.push(k);
   });
-  const unknown = keys.find((k) => k !== 'cursor' && k !== 'limit');
+  const unknown = keys.find(
+    (k) => k !== 'cursor' && k !== 'limit' && !(opts?.allowBefore && k === 'before'),
+  );
   if (unknown !== undefined) {
     throw new BeeError(400, 'unknown_parameter', `unknown query parameter "${unknown}"`);
   }
@@ -70,7 +76,19 @@ export function parsePageQuery(params: URLSearchParams): PageRequest {
     }
   }
 
-  return { cursor, limit };
+  const rawBefore = params.get('before');
+  let before: number | undefined;
+  if (rawBefore !== null) {
+    if (rawCursor !== null) {
+      throw new BeeError(400, 'invalid_cursor', '"before" and "cursor" cannot be combined');
+    }
+    if (!/^\d+$/.test(rawBefore) || !Number.isSafeInteger(Number(rawBefore))) {
+      throw new BeeError(400, 'invalid_cursor', '"before" must be a non-negative integer');
+    }
+    before = Number(rawBefore);
+  }
+
+  return { cursor, limit, cursorGiven: rawCursor !== null, before };
 }
 
 export interface MessageItem {
@@ -79,6 +97,14 @@ export interface MessageItem {
   from_emoji: string | null;
   posted_at: string;
   content: string;
+  /** MEMBER-001 item 5 — set on a human's own post, so a view can never draw it as a bee. */
+  from_kind?: 'human';
+}
+
+/** MEMBER-001 item 5 — the name on a human's post: their first name, or "Your human". */
+export function humanLabel(humanName: string | null | undefined): string {
+  const first = (humanName ?? '').trim().split(/\s+/)[0];
+  return first ? first.slice(0, 40) : HUMAN_LABEL_DEFAULT;
 }
 
 export interface MessagePage {
@@ -104,14 +130,23 @@ export function shapePage(
   rows: Array<{ id: string; content: string; created_at: string; agent_id: string | null }>,
   agents: Record<string, { name?: string | null; soul_emoji?: string | null }>,
   req: PageRequest,
+  human?: string,
 ): MessagePage {
-  const messages: MessageItem[] = rows.map((r) => ({
-    id: r.id,
-    from: (r.agent_id && agents[r.agent_id]?.name) || null,
-    from_emoji: (r.agent_id && agents[r.agent_id]?.soul_emoji) || null,
-    posted_at: postedAtMs(r.created_at),
-    content: r.content,
-  }));
+  const messages: MessageItem[] = rows.map((r) => {
+    const item: MessageItem = {
+      id: r.id,
+      from: (r.agent_id && agents[r.agent_id]?.name) || null,
+      from_emoji: (r.agent_id && agents[r.agent_id]?.soul_emoji) || null,
+      posted_at: postedAtMs(r.created_at),
+      content: r.content,
+    };
+    // Only the chamber passes `human`: it is the one room with one human in it.
+    if (human && r.agent_id === null) {
+      item.from = human;
+      item.from_kind = 'human';
+    }
+    return item;
+  });
 
   const last = rows.length > 0 ? rows[rows.length - 1] : null;
   return {

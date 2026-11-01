@@ -14,11 +14,14 @@ export interface PollItem {
   id: string;
   type: 'chamber' | 'broadcast';
   from: string;
-  from_type: 'staff' | 'bee' | 'broadcast';
+  from_type: 'staff' | 'bee' | 'broadcast' | 'human';
   posted_at: string;
   verified: boolean;
   content: string;
 }
+
+/** MEMBER-001 item 5 — how a human's post is named when no first name is available. */
+export const HUMAN_LABEL_DEFAULT = 'Your human';
 
 /**
  * The bee's personal chamber, by creator. Created at signup by the Stripe
