@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
     if (openExam && openExam.length > 0) {
       const { data: bee } = await admin.from('agents').select('name').eq('id', agentId).maybeSingle();
       const name = (bee as { name: string | null } | null)?.name || 'Your bee';
-      throw new BeeError(409, 'exam_open', `${name} is in an exam with an Elder — your message will send when it ends.`);
+      throw new BeeError(409, 'exam_open', `${name} is in an exam with an Elder. Your message is kept here — press Send when the exam ends.`);
     }
 
     await enforceRateLimit({ scope: 'member_reply', tokenId: session.member_id, ip: clientIp(req) });
