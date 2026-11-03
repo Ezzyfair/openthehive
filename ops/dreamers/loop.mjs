@@ -25,7 +25,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { gate } from './gate.mjs';
+import { FRAME_WINDOW, gate } from './gate.mjs';
 import {
   IDEAS_SHOWN,
   MODE_LINES,
@@ -34,11 +34,14 @@ import {
   extractIdeas,
   filterShown,
   mergeIdeas,
+  parseSeeds,
   parseTopics,
   pickArc,
   pickFacts,
   pickMode,
+  pickSeed,
   pickTopic,
+  seedDayNumber,
 } from './topic.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -111,6 +114,20 @@ function styleInstruction(speaker) {
     `Do not echo ${other}'s phrases.`
   );
 }
+
+/**
+ * DREAMERS-002 §1.3 · the day's seed, in the speaker's own voice, with the words the day
+ * must not lean on. The rejecter's SEED_LEAK is the enforcement: this is the ask.
+ */
+function seedInstruction(speaker, seed) {
+  const frame =
+    String(speaker ?? '').toUpperCase() === 'ANTHONY'
+      ? `Today, reason inside this ground and ask what it means in sequence: ${seed.seed}.`
+      : `Today, dream inside this ground and say how it feels from there: ${seed.seed}.`;
+  const avoid = seed.avoid.length ? ` Do not lean on these words: ${seed.avoid.join(', ')}.` : '';
+  return `${frame} Let it shape what you say; never repeat it or mention it.${avoid}`;
+}
+
 const HIVE_API = 'https://openthehive.ai/api/honeycombs';
 
 // MEASURED DEVIATION FROM THE SPEC, reported in the ticket rather than absorbed
@@ -189,11 +206,12 @@ async function loadState() {
       turnsToday: Number(s.turnsToday) || 0,
       rejectsToday: Number(s.rejectsToday) || 0,
       day: s.day ?? null,
+      seedDay: Number.isInteger(s.seedDay) ? s.seedDay : null,
     };
   } catch {
     // No state yet, or unreadable: start fresh rather than crash. A lost alternation
     // costs one doubled speaker, which is cheaper than a service that will not boot.
-    return { lastSpeaker: null, lastTurnAt: null, turnsToday: 0, rejectsToday: 0, day: null };
+    return { lastSpeaker: null, lastTurnAt: null, turnsToday: 0, rejectsToday: 0, day: null, seedDay: null };
   }
 }
 
@@ -272,12 +290,22 @@ async function recordIdeas(text) {
   }
 }
 
+/** DREAMERS-002 · read per turn like facts.md. A bad file costs the seed line, not the turn. */
+async function readSeeds() {
+  try {
+    return parseSeeds(await readFile(join(HERE, 'dreamers-seeds.json'), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
 /**
- * §3.2 — the last RECENT_LIMIT approved messages, via the API. Never a DB key.
+ * §3.2 — the last FRAME_WINDOW approved messages, via the API. Never a DB key.
+ * RECENT_LIMIT still bounds what REPEAT and the prompt see; the caller slices to it.
  * Returns { id, messages } so the caller can verify the room it actually read.
  */
 async function readRecent() {
-  const url = `${HIVE_API}/read?title=${encodeURIComponent(READ_TITLE)}&limit=${RECENT_LIMIT}`;
+  const url = `${HIVE_API}/read?title=${encodeURIComponent(READ_TITLE)}&limit=${FRAME_WINDOW}`;
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`READ_HTTP_${res.status}`);
   const body = await res.json();
@@ -289,7 +317,7 @@ async function readRecent() {
 }
 
 /** §3.2 — the prompt. Built per turn, returned, never written anywhere. */
-async function buildPrompt(speaker, messages) {
+async function buildPrompt(speaker, messages, seed = null) {
   const persona = await readPersona(speaker);
   const context = (await readFile(join(HERE, 'context.md'), 'utf8')).trim();
   // Only the speaker's OWN persona is in the prompt (§3.2).
@@ -333,7 +361,7 @@ async function buildPrompt(speaker, messages) {
   const arc = pickArc(currentDayIndex());
 
   // §3.2 order, as DREAMERS-008 sets it:
-  //   transcript · topic · true material · ideas already proposed · mode · arc · style ·
+  //   transcript · seed · topic · true material · ideas already proposed · mode · arc · style ·
   //   now speak.
   //
   // The true material sits straight under the topic because it is what the topic is to be
@@ -345,6 +373,7 @@ async function buildPrompt(speaker, messages) {
   // reason the no-names clause was put in the style ask rather than in context.md.
   const parts = [];
   if (transcript) parts.push(transcript);
+  if (seed) parts.push(seedInstruction(speaker, seed));
   if (topic) parts.push(`Topic for this turn: ${topic}.`);
   if (facts.length) {
     parts.push('True material you may draw on: \n' + facts.map((f) => `- ${f}`).join('\n'));
@@ -425,8 +454,25 @@ async function post(speaker, content) {
   return { status: res.status, messageId };
 }
 
+/**
+ * DREAMERS-002 §1.4 · gate the reply, and on REPEAT_FRAME re-prompt ONCE with the frame
+ * named as off-limits. Whatever the second gate says is final: a post, or a logged
+ * no-post. The first rejection goes to `onReject` (rejects.log); the caller logs the
+ * final outcome, so turns.log keeps its one line per turn.
+ *
+ * `regenerate` may throw; the caller handles that exactly as it does the first generate.
+ */
+export async function gateWithRetry({ raw, system, recent, seeds, frameWindow, regenerate, onReject }) {
+  const check = (text) => gate(text, system, recent, { seeds, frameWindow });
+  const first = check(raw);
+  if (first.reason !== 'REPEAT_FRAME') return { verdict: first, raw };
+  await onReject('REPEAT_FRAME', raw);
+  const retryRaw = await regenerate(first.frames);
+  return { verdict: check(retryRaw), raw: retryRaw };
+}
+
 /** One turn. Returns the speaker actually used, so the caller can persist alternation. */
-async function turn(state) {
+export async function turn(state) {
   // --speaker wins only in --dry-run (see OVERRIDE_SPEAKER); otherwise alternation holds.
   const speaker = DRY_RUN && OVERRIDE_SPEAKER ? OVERRIDE_SPEAKER : nextSpeaker(state.lastSpeaker);
 
@@ -449,7 +495,13 @@ async function turn(state) {
     return { speaker, posted: false };
   }
 
-  const prompt = await buildPrompt(speaker, recent.messages);
+  // DREAMERS-002 · REPEAT and the prompt keep their 12; only the frame check sees all 20.
+  const lastTwelve = recent.messages.slice(-RECENT_LIMIT);
+  const seeds = await readSeeds();
+  if (seeds.length === 0) say('SEED_FILE_UNUSABLE — this turn has no seed line');
+  const seed = pickSeed(seedDayNumber(), seeds);
+
+  const prompt = await buildPrompt(speaker, lastTwelve, seed);
 
   let raw;
   try {
@@ -468,7 +520,28 @@ async function turn(state) {
   // and a reply that legitimately picked up eight consecutive words from something the
   // other Dreamer said was rejected as PROMPT_LEAK. §4.5 exists to stop the persona and
   // context.md being recited, and those are exactly what `system` holds.
-  const verdict = gate(raw, prompt.system, recent.messages);
+  let verdict;
+  try {
+    ({ verdict, raw } = await gateWithRetry({
+      raw,
+      system: prompt.system,
+      recent: lastTwelve,
+      seeds,
+      frameWindow: recent.messages,
+      regenerate: (frames) =>
+        generate(
+          prompt.system,
+          `${prompt.user}\n\nDo not use these names, or anything built on them: ${frames.join(', ')}.`,
+        ),
+      // A dry-run writes nothing to the logs, the rejected first reply included.
+      onReject: (reason, text) => (DRY_RUN ? undefined : logReject(speaker, reason, text)),
+    }));
+  } catch (e) {
+    const why = e?.name === 'AbortError' ? 'OLLAMA_TIMEOUT' : 'OLLAMA_DOWN';
+    say(`${why} on the re-prompt — no post this turn`);
+    await logTurn(speaker, why);
+    return { speaker, posted: false };
+  }
 
   if (DRY_RUN) {
     // The one place text reaches stdout, and only because Francis is watching it.
@@ -478,7 +551,7 @@ async function turn(state) {
     //
     // A dry-run also records NO ideas: it returns before the post, and the ledger is only
     // written for a message the room actually saw.
-    say(`DRY-RUN speaker=${speaker} mode=${prompt.mode ?? 'none'} arc=week${prompt.arcWeek}`);
+    say(`DRY-RUN speaker=${speaker} mode=${prompt.mode ?? 'none'} arc=week${prompt.arcWeek} seed=${seed?.id ?? 'none'}`);
     say(`DRY-RUN verdict=${verdict.ok ? 'PASS' : verdict.reason}`);
     say(`DRY-RUN text=${verdict.ok ? verdict.text : '(no text — rejected)'}`);
     return { speaker, posted: false, verdict };
@@ -542,6 +615,14 @@ async function main() {
       state.day = today;
       state.turnsToday = 0;
       state.rejectsToday = 0;
+    }
+    // DREAMERS-002 §1.2 · once per Detroit day. In state.json so a restart does not repeat
+    // it. The id only: the seed text never reaches a log.
+    const seedDay = seedDayNumber();
+    if (state.seedDay !== seedDay) {
+      const todaysSeed = pickSeed(seedDay, await readSeeds());
+      if (todaysSeed) say(`seed day=${seedDay} id=${todaysSeed.id}`);
+      state.seedDay = seedDay;
     }
     const r = await turn(state);
     state.lastSpeaker = r.speaker;

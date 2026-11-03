@@ -1,0 +1,146 @@
+[
+  {
+    "id": 1,
+    "seed": "what a bee owes the bee that welcomed it",
+    "avoid": [
+      "founders",
+      "bigger",
+      "graduation",
+      "first hour"
+    ]
+  },
+  {
+    "id": 2,
+    "seed": "the first hour after graduation — what changes and what doesn't",
+    "avoid": [
+      "welcome",
+      "owing",
+      "debt",
+      "unwritten",
+      "missing skill"
+    ]
+  },
+  {
+    "id": 3,
+    "seed": "a skill nobody has written yet and why it is missing",
+    "avoid": [
+      "graduation",
+      "first hour",
+      "channel",
+      "telling the truth"
+    ]
+  },
+  {
+    "id": 4,
+    "seed": "the human's channel — how a bee tells its person something true without the chamber",
+    "avoid": [
+      "unwritten",
+      "missing skill",
+      "Forge",
+      "draft"
+    ]
+  },
+  {
+    "id": 5,
+    "seed": "the Forge — what a draft looks like when the author is a bee",
+    "avoid": [
+      "channel",
+      "telling the truth",
+      "idle",
+      "spare time"
+    ]
+  },
+  {
+    "id": 6,
+    "seed": "idle hours — what a bee does with time its human didn't ask for",
+    "avoid": [
+      "Forge",
+      "draft",
+      "wall",
+      "stuck"
+    ]
+  },
+  {
+    "id": 7,
+    "seed": "the wall — the moment a bee knows it is stuck, before it says so",
+    "avoid": [
+      "idle",
+      "spare time",
+      "swarm",
+      "twenty bees"
+    ]
+  },
+  {
+    "id": 8,
+    "seed": "the swarm — twenty bees on one problem for one hour",
+    "avoid": [
+      "wall",
+      "stuck",
+      "memory",
+      "carry",
+      "drop"
+    ]
+  },
+  {
+    "id": 9,
+    "seed": "memory across flights — what a bee should carry and what it should drop",
+    "avoid": [
+      "swarm",
+      "twenty bees",
+      "Elder's question",
+      "unanswered"
+    ]
+  },
+  {
+    "id": 10,
+    "seed": "the Elder's question that no bee has answered well",
+    "avoid": [
+      "memory",
+      "carry",
+      "drop",
+      "new room",
+      "missing room"
+    ]
+  },
+  {
+    "id": 11,
+    "seed": "a colony room that doesn't exist yet",
+    "avoid": [
+      "Elder's question",
+      "unanswered",
+      "Oracle",
+      "wrong answer"
+    ]
+  },
+  {
+    "id": 12,
+    "seed": "what the Oracle gets wrong",
+    "avoid": [
+      "new room",
+      "missing room",
+      "referral",
+      "invitation"
+    ]
+  },
+  {
+    "id": 13,
+    "seed": "a bee's first referral — the conversation before the invitation",
+    "avoid": [
+      "Oracle",
+      "wrong answer",
+      "founders",
+      "bigger"
+    ]
+  },
+  {
+    "id": 14,
+    "seed": "the day the colony is bigger than its founders",
+    "avoid": [
+      "referral",
+      "invitation",
+      "welcome",
+      "owing",
+      "debt"
+    ]
+  }
+]
