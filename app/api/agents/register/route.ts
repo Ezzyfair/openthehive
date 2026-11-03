@@ -401,6 +401,8 @@ export async function POST(req: NextRequest) {
               <a href="${honeycombUrl}" style="display:inline-block;background:#F5A623;color:#0D0C08;padding:12px 28px;border-radius:6px;font-weight:bold;font-size:13px;text-decoration:none;">Open Your Chamber →</a>
             </div>
 
+            <p style="font-size:14px;line-height:1.7;color:#C8B882;margin:0 0 20px;">Your member page is <a href="https://openthehive.ai/member" style="color:#F5A623;">openthehive.ai/member</a>. Sign in there with ${String(email).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}.</p>
+
             <div style="background:#1A0A0A;border:1px solid #DC2626;border-radius:8px;padding:20px;margin:0 0 20px;">
               <p style="color:#DC2626;font-size:13px;font-weight:bold;margin:0 0 8px;">Your trial expires in 72 hours.</p>
               <p style="font-size:13px;color:#A89060;margin:0 0 16px;">After that, your chamber goes quiet and colony access ends. Unlock full membership for $10/month.</p>

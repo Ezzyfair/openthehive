@@ -13,7 +13,7 @@
 // C4: polls every POLL_MS, no realtime. The typing animation is the Dreamers animation,
 // at the Dreamers speed, because the constants come from the same module.
 // ----------------------------------------------------------------------------
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import ConfettiGraduation from '@/components/ConfettiGraduation';
 import {
@@ -29,6 +29,17 @@ import {
   type ChatMessage,
 } from '@/lib/chat-view';
 
+// useLayoutEffect warns during the server render of a client component.
+const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+const MAX_REPLY_CHARS = 2000;
+
+/** Older pages kept by "Load earlier", then whatever the poll returned. One copy of each id. */
+function joinPages(earlier: ChatMessage[], latest: ChatMessage[]): ChatMessage[] {
+  const ids = new Set(latest.map((m) => m.id));
+  return [...earlier.filter((m) => !ids.has(m.id)), ...latest];
+}
+
 interface ChamberPayload {
   chamber: { id: string; title?: string | null; description?: string | null } | null;
   room?: { id: string; title?: string | null; description?: string | null } | null;
@@ -38,6 +49,8 @@ interface ChamberPayload {
   hint?: string | null;
   /** Only /api/member/chamber sends this. The colony lane never does. */
   agent_status?: string | null;
+  /** Only /api/member/chamber sends this. */
+  bee_name?: string | null;
 }
 
 export default function MemberChat({
@@ -53,7 +66,7 @@ export default function MemberChat({
   lane?: 'chamber' | 'colony';
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
-  const [room, setRoom] = useState<{ title?: string | null; description?: string | null } | null>(null);
+  const [room, setRoom] = useState<{ id?: string; title?: string | null; description?: string | null } | null>(null);
   const [chamberNull, setChamberNull] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +80,18 @@ export default function MemberChat({
   const typingRef = useRef<NodeJS.Timeout | null>(null);
   const feedRef = useRef<HTMLDivElement | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
+  // MEMBER-001 items 5, 6 — chamber lane only.
+  const [beeName, setBeeName] = useState<string | null>(null);
+  const [hasEarlier, setHasEarlier] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const earlierRef = useRef<ChatMessage[]>([]);
+  const latestRef = useRef<ChatMessage[]>([]);
+  const openedRef = useRef(false);
+  const heightBeforeRef = useRef<number | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
 
   function scrollBottom() {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -127,7 +152,12 @@ export default function MemberChat({
       if (lane === 'chamber' && payload.agent_status === 'active') setGraduated(true);
 
       const next = payload.messages ?? [];
-      setMessages(next);
+      latestRef.current = next;
+      if (lane === 'chamber') {
+        setBeeName(payload.bee_name ?? null);
+        if (first) setHasEarlier(payload.has_more === true);
+      }
+      setMessages(lane === 'chamber' ? joinPages(earlierRef.current, next) : next);
       setLoading(false);
 
       const fresh = next.filter((m) => !seenRef.current.has(m.id));
@@ -136,7 +166,7 @@ export default function MemberChat({
         const last = fresh[fresh.length - 1];
         setTimeout(() => animate(last.id, last.content), 100);
       }
-      if (first) setTimeout(scrollBottom, 100);
+      if (first && lane !== 'chamber') setTimeout(scrollBottom, 100);
     }
 
     load(true);
@@ -150,10 +180,79 @@ export default function MemberChat({
 
   const state = viewState({ loading, error, locked, chamberNull, hint, messages });
 
+  // MEMBER-001 item 6 — before the first paint, so the chamber is never seen at the top
+  // of its history. The page scrolls too: on a phone the feed and the reply box sit
+  // below the header, and the newest message has to be on the screen, not just at the
+  // end of the feed.
+  useBeforePaint(() => {
+    if (lane !== 'chamber' || openedRef.current) return;
+    if (state.kind !== 'messages' && state.kind !== 'empty') return;
+    openedRef.current = true;
+    scrollBottom();
+    composerRef.current?.scrollIntoView({ block: 'end' });
+  });
+
+  // "Load earlier" adds height above the reader. Hold their place.
+  useBeforePaint(() => {
+    if (heightBeforeRef.current === null || !feedRef.current) return;
+    feedRef.current.scrollTop += feedRef.current.scrollHeight - heightBeforeRef.current;
+    heightBeforeRef.current = null;
+  });
+
+  async function loadEarlier() {
+    const oldest = (messages ?? [])[0];
+    if (!oldest || loadingEarlier) return;
+    setLoadingEarlier(true);
+    // +1: posted_at is floored to the millisecond, so this re-reads the oldest row
+    // rather than skipping a neighbour in the same millisecond. joinPages drops repeats.
+    const r = await readJson<ChamberPayload>(`${endpoint}?before=${new Date(oldest.posted_at).getTime() + 1}`);
+    setLoadingEarlier(false);
+    if (!r.ok) {
+      setSendError(r.error);
+      return;
+    }
+    const page = (r.data as ChamberPayload).messages ?? [];
+    page.forEach((m) => seenRef.current.add(m.id));
+    earlierRef.current = joinPages(page, earlierRef.current);
+    heightBeforeRef.current = feedRef.current?.scrollHeight ?? null;
+    setHasEarlier((r.data as ChamberPayload).has_more === true);
+    setMessages(joinPages(earlierRef.current, latestRef.current));
+  }
+
+  async function sendReply(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const content = draft.trim();
+    if (!content || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        window.location.href = '/member/login';
+        return;
+      }
+      if (!res.ok) throw new Error(json?.message || 'That did not send. Try again.');
+      const sent = json.message as ChatMessage;
+      seenRef.current.add(sent.id); // your own words do not type themselves out
+      latestRef.current = [...latestRef.current, sent];
+      setMessages(joinPages(earlierRef.current, latestRef.current));
+      setDraft('');
+      setTimeout(scrollBottom, 0);
+    } catch (err: any) {
+      setSendError(err?.message || 'That did not send. Try again.');
+    }
+    setSending(false);
+  }
+
   return (
     <section className="max-w-[800px] mx-auto px-6 pt-28 pb-20">
       {/* Chamber lane only. It renders nothing until the bee graduates. */}
-      {lane === 'chamber' && <ConfettiGraduation graduated={graduated} />}
+      {lane === 'chamber' && <ConfettiGraduation graduated={graduated} onceKey={room?.id} />}
       <Link href={backHref} className="text-[12px] text-hive-muted hover:text-hive-gold transition-colors mb-6 inline-block">
         ← {backLabel}
       </Link>
@@ -200,9 +299,17 @@ export default function MemberChat({
             <h1 className="font-serif text-[22px] font-black text-hive-text mb-2">
               {room?.title || 'Your chamber'}
             </h1>
-            {/* Matt C15 (Oct 19) — the AI-persona disclosure, chamber lane only. */}
+            {/* MEMBER-001 item 7 — its own band, in the flow. Nothing is painted over text. */}
+            {lane === 'chamber' && graduated && (
+              <div className="border-y border-hive-gold/30 py-2 my-3 text-center">
+                <div className="text-[13px] font-bold tracking-[0.2em] text-hive-gold">🐝 GRADUATED 🐝</div>
+                <div className="font-serif italic text-[13px] text-hive-sub mt-1">You are becoming an agent that builds.</div>
+              </div>
+            )}
+            {/* Matt C15 (Oct 19) — the AI-persona disclosure, chamber lane only.
+                MEMBER-001 item 7 — hive-sub on hive-bg2; hive-dim was 1.9:1. */}
             {lane === 'chamber' && (
-              <p className="text-[11px] text-hive-dim mb-2">Coaches, Elders and the Oracle are AI personas operated by The Hive.</p>
+              <p className="text-[12px] text-hive-sub mb-2">Coaches, Elders and the Oracle are AI personas operated by The Hive.</p>
             )}
             {room?.description && (
               <p className="text-[13px] text-hive-sub leading-relaxed">{room.description}</p>
@@ -210,6 +317,16 @@ export default function MemberChat({
           </div>
 
           <div ref={feedRef} className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+            {lane === 'chamber' && hasEarlier && (
+              <button
+                type="button"
+                onClick={loadEarlier}
+                disabled={loadingEarlier}
+                className="block mx-auto text-[12px] text-hive-gold underline py-1"
+              >
+                {loadingEarlier ? 'Loading…' : 'Load earlier'}
+              </button>
+            )}
             {state.kind === 'empty' ? (
               <div className="bg-hive-bg2 border border-hive-border rounded-[10px] p-8 text-center">
                 <p className="text-hive-muted text-[14px]">Nothing here yet. Your coach will be along.</p>
@@ -224,9 +341,11 @@ export default function MemberChat({
                   }`}>
                     <div className="flex items-center gap-3 mb-3">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center text-[14px] border shrink-0 bg-hive-gold/10 border-hive-gold/20">
-                        {msg.from_emoji || '🐝'}
+                        {msg.from_kind === 'human' ? '🧑' : msg.from_emoji || '🐝'}
                       </div>
-                      <span className="text-[13px] font-bold text-hive-gold">{msg.from || 'Colony'}</span>
+                      <span className={`text-[13px] font-bold ${msg.from_kind === 'human' ? 'text-hive-cyan' : 'text-hive-gold'}`}>
+                        {msg.from || 'Colony'}
+                      </span>
                       <span className="ml-auto text-[9px] text-hive-dim shrink-0">{relativeTime(msg.posted_at)}</span>
                     </div>
                     <p className="text-[13.5px] text-hive-text leading-[1.75] whitespace-pre-wrap">{shown}</p>
@@ -235,6 +354,32 @@ export default function MemberChat({
               })
             )}
           </div>
+
+          {/* MEMBER-001 item 5 — the session is the credential. No key reaches this page. */}
+          {lane === 'chamber' && (
+            <form ref={composerRef} onSubmit={sendReply} className="mt-4">
+              <textarea
+                aria-label={`Write to ${beeName || 'your bee'}`}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                maxLength={MAX_REPLY_CHARS}
+                rows={3}
+                className="w-full bg-hive-bg2 border border-hive-border rounded-[10px] p-3 text-[16px] text-hive-text leading-[1.5]"
+              />
+              {sendError && (
+                <p role="alert" className="text-[13px] text-hive-red mt-2">
+                  {sendError}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={sending || !draft.trim()}
+                className="mt-2 w-full bg-hive-gold text-hive-bg font-bold text-[14px] rounded-[10px] py-3 disabled:opacity-50"
+              >
+                {sending ? 'Sending…' : `Send to ${beeName || 'your bee'}`}
+              </button>
+            </form>
+          )}
         </>
       )}
 

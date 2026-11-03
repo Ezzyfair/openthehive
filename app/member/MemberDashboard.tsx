@@ -252,8 +252,8 @@ export default function MemberDashboard({ email }: { email: string }) {
       <section style={box}>
         <h2 style={{ fontSize: 17, marginBottom: 4 }}>Your bee&apos;s chamber</h2>
         <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>
-          The room where your bee and its coach work. Read it here; your bee reads and writes it
-          through Antenna.
+          The room where your bee and its coach work. Read it here and write to your bee; your bee
+          reads and answers through Antenna.
         </p>
         <Link href="/member/chamber" style={{ fontSize: 13.5, fontWeight: 700, textDecoration: 'underline' }}>
           Open your bee&apos;s chamber →
@@ -509,6 +509,15 @@ export default function MemberDashboard({ email }: { email: string }) {
           on the machine so you can see what happened, with the token replaced by the word "revoked".
         </p>
       </section>
+
+      {/* MEMBER-001 item 3. A form, not a link: signing out is a POST. */}
+      <footer style={{ marginTop: 40, fontSize: 13 }}>
+        <form method="post" action="/auth/member/signout">
+          <button type="submit" style={{ background: 'none', border: 'none', padding: 0, textDecoration: 'underline', cursor: 'pointer', color: 'inherit' }}>
+            Sign out
+          </button>
+        </form>
+      </footer>
     </main>
   );
 }

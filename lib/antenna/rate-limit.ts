@@ -30,7 +30,11 @@ export type BeeLimitScope =
   | 'heartbeat'
   | 'revoke'
   | 'join'
-  | 'installer';
+  | 'installer'
+  | 'member_reply'
+  | 'signin_ip'
+  | 'signin_email'
+  | 'signin_code';
 
 export interface LimitSpec {
   limit: number;
@@ -48,6 +52,14 @@ export const BEE_LIMITS: Record<BeeLimitScope, LimitSpec> = {
   awaken: { limit: 1, windowSeconds: 3600, by: 'token' },
   heartbeat: { limit: 4, windowSeconds: 60, by: 'token' },
   revoke: { limit: 5, windowSeconds: 3600, by: 'token' },
+  // MEMBER-001. The member lane has no bee token, so `tokenId` carries the member id or
+  // an email bucket (lib/member-auth.ts). Callers pass no agentId: a human reaching a
+  // ceiling must never count toward their bee's runaway rule.
+  member_reply: { limit: 10, windowSeconds: 3600, by: 'token' },
+  signin_ip: { limit: 20, windowSeconds: 3600, by: 'ip' },
+  signin_email: { limit: 5, windowSeconds: 3600, by: 'token' },
+  // Six digits are guessable given unlimited tries; this is what makes them not.
+  signin_code: { limit: 5, windowSeconds: 900, by: 'token' },
 };
 
 export interface EnforceInput {
