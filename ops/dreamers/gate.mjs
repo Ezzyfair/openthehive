@@ -14,7 +14,7 @@
 //   1 think remnants     2 prefix strip (strip, never reject)   3 SKIP, exact
 //   4 length             4b TRUNCATED                           5 prompt leak
 //   6 register + money   7 meta                                 7b style (words, patterns, names)
-//   8 repeat
+//   5b seed leak         8 repeat                               8b repeat frame
 //
 // NOTE FOR THE GREPS: this file and gate.test.mjs QUOTE the forbidden tokens in order
 // to detect them, exactly as CLAUDE.md quotes them in order to define them. They are
@@ -161,13 +161,221 @@ export function leaksPrompt(text, promptText) {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SEED_LEAK — DREAMERS-002 §1.3. The seed shapes the dream and is never named.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A run of this many seed words in a post is a leak (ticket §1.3). */
+export const SEED_RUN_WORDS = 6;
+
+/**
+ * Talk about the mechanism itself (ticket §0): "today's topic is…". Narrow on purpose.
+ * The bare word "seed" stays allowed, because a post may use it as an ordinary word.
+ */
+const RE_SEED_MECHANISM = /\btoday'?s (?:seed|topic|territory)\b|\bseed (?:topic|of the day|for today)\b|\bdaily seed\b/;
+
+/** Lowercase words only: punctuation and the seeds' em-dashes cannot hide a match. */
+function seedWords(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[^a-z0-9']+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+}
+
+/**
+ * Does `text` contain a whole seed, a SEED_RUN_WORDS-word run of one, or talk about the
+ * seed itself? The whole-seed check is not redundant: "what the Oracle gets wrong" has
+ * five words, so it has no six-word run. EVERY seed is checked, not only today's: gate 2
+ * is that no seed sentence can reach a post.
+ */
+export function leaksSeed(text, seeds = []) {
+  const words = seedWords(text);
+  const hay = ` ${words.join(' ')} `;
+  if (RE_SEED_MECHANISM.test(hay)) return true;
+  for (const entry of seeds ?? []) {
+    const seed = seedWords(typeof entry === 'string' ? entry : entry?.seed);
+    if (seed.length === 0) continue;
+    if (hay.includes(` ${seed.join(' ')} `)) return true;
+    for (let i = 0; i + SEED_RUN_WORDS <= seed.length; i++) {
+      if (hay.includes(` ${seed.slice(i, i + SEED_RUN_WORDS).join(' ')} `)) return true;
+    }
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REPEAT_FRAME — DREAMERS-002 §1.4. Backstop A: no named frame settles.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The rolling window, in posted turns, and how many prior posts a frame may hold. */
+export const FRAME_WINDOW = 20;
+export const FRAME_LIMIT = 3;
+
+/**
+ * Canon names are not frames. Without this the backstop stops the room outright:
+ * "Skill Vault" sat in 17 of the last 20 live posts on Nov 1. Passed through frameWord,
+ * so "Dreamers Chamber" and "Open Problems" meet the keys extraction actually builds.
+ */
+const FRAME_CANON = new Set(
+  [
+    'skill vault',
+    'first flight',
+    'worker bee',
+    'honey maker',
+    'dreamers chamber',
+    'the hive',
+    'colony research',
+    'outreach research',
+    'security doctrine',
+    'open problems',
+    'my contribution',
+    'colony milestones',
+    "queen's address",
+  ].map((name) => name.split(' ').map(frameWord).join(' ')),
+);
+
+/**
+ * Exempt as a head and as a label: the first word of each canon name (Nikita, v2 point 2),
+ * so "Skill Forge" and "Skill Map" never add up to a repeat of "Skill", and the single
+ * names of the colony (Francis, Nov 1), so a seed day can say its own subject.
+ */
+const FRAME_CANON_FIRSTS = new Set([
+  ...[...FRAME_CANON].map((key) => key.split(' ')[0]),
+  ...['forge', 'elder', 'oracle', 'antenna', 'vault', 'hive', 'queen'].map(frameWord),
+]);
+
+/**
+ * Words counted in ANY case, as a fourth counter: a capitalized extractor cannot see a
+ * frame that has become a common noun (Francis, Nov 1, after "signal" went 26 of 31
+ * lowercase). Lowercase, singular. Ezzy may propose additions in her briefing and never
+ * adds them: a change here is a change to this file, reviewed like any other.
+ */
+export const FRAME_WATCH = ['signal'];
+
+/** Sentence-start capitals. Dropped from the front of a run, never a frame's first word. */
+const FRAME_LEAD_WORDS = new Set(
+  ('a an and any as at because but by each every for from how if in into is it its let my no not of on or our ' +
+    'so some that the their then these they this those to we what when where which while who why with would you your').split(' '),
+);
+
+/** A word that disqualifies any pair it is in: calendar words and the two Dreamers. */
+const FRAME_STOP_WORDS = new Set([
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'beatrix', 'anthony',
+]);
+
+/** "I", "I'm", "I've": the pronoun is capitalized by grammar, so it is never a label. */
+const RE_FIRST_PERSON = /^i(?:'|$)/;
+
+/** Capitalized words next to each other. A run of one is a candidate label. */
+const RE_CAP_RUN = /(?<![A-Za-z0-9'\u2019-])[A-Z][A-Za-z0-9'\u2019-]*(?:[ \t]+[A-Z][A-Za-z0-9'\u2019-]*)*/g;
+
+/** Lowercase, straight apostrophe, no possessive, no plural, so "Soft Anchors" = "Soft Anchor". */
+function frameWord(w) {
+  return w.toLowerCase().replace(/\u2019/g, "'").replace(/'s$/, '').replace(/(?<=[a-z]{3})s$/, '');
+}
+
+/** Is the word at `index` the first of its sentence or line? Opening quotes do not count. */
+function atSentenceStart(text, index) {
+  const before = text.slice(0, index).replace(/[ \t"'()[\]*_\u201c\u201d\u2018\u2019]+$/, '');
+  return before === '' || /[.!?\u2026\n]$/.test(before);
+}
+
+/**
+ * The three sets in one post, each deduped, each Map<normalized key, display text>:
+ *   frames  capitalized two-word frames. A longer run yields each adjacent pair, so
+ *           "Signal Thread Protocol" counts toward "Signal Thread".
+ *   heads   the first word of every frame, so Signal Thread and Signal Tether are one word.
+ *   labels  single capitalized words in no frame, not at a sentence start, so "the Signal"
+ *           counts and "Signal is everywhere." does not.
+ * A word in a canon name is in neither heads nor labels, and FRAME_CANON_FIRSTS exempts
+ * the first word of a canon name from both, in any pair.
+ */
+export function extractFrames(text) {
+  const s = String(text ?? '');
+  const frames = new Map();
+  const heads = new Map();
+  const labels = new Map();
+  for (const m of s.matchAll(RE_CAP_RUN)) {
+    const words = m[0].split(/[ \t]+/);
+    const norm = words.map(frameWord);
+    const paired = new Set();
+    // Canon first, over the whole run: the lead word in "My Contribution" is part of the name.
+    for (let i = 0; i + 1 < words.length; i++) {
+      if (FRAME_CANON.has(`${norm[i]} ${norm[i + 1]}`)) paired.add(i).add(i + 1);
+    }
+    let lead = 0;
+    while (lead < words.length && FRAME_LEAD_WORDS.has(words[lead].toLowerCase())) lead += 1;
+    for (let i = lead; i + 1 < words.length; i++) {
+      const key = `${norm[i]} ${norm[i + 1]}`;
+      if (FRAME_STOP_WORDS.has(norm[i]) || FRAME_STOP_WORDS.has(norm[i + 1]) || FRAME_CANON.has(key)) continue;
+      paired.add(i).add(i + 1);
+      if (!frames.has(key)) frames.set(key, `${words[i]} ${words[i + 1]}`);
+      if (!FRAME_CANON_FIRSTS.has(norm[i]) && !heads.has(norm[i])) heads.set(norm[i], words[i]);
+    }
+    for (let i = lead; i < words.length; i++) {
+      const w = norm[i];
+      if (paired.has(i) || (i === 0 && atSentenceStart(s, m.index))) continue;
+      if (FRAME_LEAD_WORDS.has(words[i].toLowerCase()) || FRAME_LEAD_WORDS.has(w)) continue;
+      if (FRAME_STOP_WORDS.has(w) || FRAME_CANON_FIRSTS.has(w) || RE_FIRST_PERSON.test(w)) continue;
+      if (!labels.has(w)) labels.set(w, words[i]);
+    }
+  }
+  return { frames, heads, labels };
+}
+
+/**
+ * The FRAME_WATCH words in one post, any case, plural included: Map<word, display text>.
+ * A whole word only: "signals" and "Signal-Thread" count, "signaling" does not.
+ */
+export function watchWords(text) {
+  const out = new Map();
+  for (const m of String(text ?? '').matchAll(/[A-Za-z0-9'\u2019]+/g)) {
+    const w = frameWord(m[0]);
+    if (FRAME_WATCH.includes(w) && !out.has(w)) out.set(w, m[0]);
+  }
+  return out;
+}
+
+/**
+ * The tokens in `text` that already sit in FRAME_LIMIT posts of the window, so this post
+ * would be the fourth: frames as "Signal Thread", heads, labels and watch words as
+ * "Signal". Four counters, same window, same limit. Counted per POST: a token said twice
+ * in one post is one post. One word hit by two counters is named once.
+ */
+export function repeatedFrames(text, windowPosts = []) {
+  const counts = { frames: new Map(), heads: new Map(), labels: new Map(), watch: new Map() };
+  const setsOf = (t) => ({ ...extractFrames(t), watch: watchWords(t) });
+  for (const m of (windowPosts ?? []).slice(-FRAME_WINDOW)) {
+    const sets = setsOf(typeof m === 'string' ? m : m?.content);
+    for (const set of Object.keys(counts)) {
+      for (const key of sets[set].keys()) counts[set].set(key, (counts[set].get(key) ?? 0) + 1);
+    }
+  }
+  const sets = setsOf(text);
+  const hit = new Map();
+  for (const set of Object.keys(counts)) {
+    for (const [key, shown] of sets[set]) {
+      if ((counts[set].get(key) ?? 0) >= FRAME_LIMIT && !hit.has(shown.toLowerCase())) {
+        hit.set(shown.toLowerCase(), shown);
+      }
+    }
+  }
+  return [...hit.values()];
+}
+
 /**
  * The gate. Returns { ok: true, text } or { ok: false, reason }.
+ * A REPEAT_FRAME rejection also carries `frames`, for the one re-prompt.
  *
  * `recent` is the last chamber messages, for step 8. It defaults to empty so
  * gate(text, promptText) works as §4 documents it; the loop passes the 12 it read.
+ * `seeds` and `frameWindow` (DREAMERS-002) default to empty, which switches 5b and 8b off.
  */
-export function gate(rawText, promptText = '', recent = []) {
+export function gate(rawText, promptText = '', recent = [], { seeds = [], frameWindow = [] } = {}) {
   // 1 · think remnants
   const cleaned = cleanThink(rawText);
   if (/<\/?think/i.test(cleaned)) return { ok: false, reason: 'THINK_REMNANT' };
@@ -194,6 +402,9 @@ export function gate(rawText, promptText = '', recent = []) {
   if (LEAK_MARKERS.some((m) => text.includes(m))) return { ok: false, reason: 'PROMPT_LEAK' };
   if (leaksPrompt(text, promptText)) return { ok: false, reason: 'PROMPT_LEAK' };
 
+  // 5b · seed leak — a seed is prompt text, in the user half that step 5 does not read.
+  if (leaksSeed(text, seeds)) return { ok: false, reason: 'SEED_LEAK' };
+
   // 6 · register, then money
   if (RE_TOKEN.test(text)) return { ok: false, reason: 'REGISTER_TOKEN' };
   if (RE_PROMISE.test(text)) return { ok: false, reason: 'REGISTER_PROMISE' };
@@ -213,6 +424,11 @@ export function gate(rawText, promptText = '', recent = []) {
   if ((recent ?? []).some((m) => normalize(typeof m === 'string' ? m : m?.content) === n)) {
     return { ok: false, reason: 'REPEAT' };
   }
+
+  // 8b · repeat frame — last, so every register rule has already spoken and a re-prompt
+  // is only ever spent on a post that was otherwise fit to go out.
+  const frames = repeatedFrames(text, frameWindow);
+  if (frames.length > 0) return { ok: false, reason: 'REPEAT_FRAME', frames };
 
   return { ok: true, text };
 }

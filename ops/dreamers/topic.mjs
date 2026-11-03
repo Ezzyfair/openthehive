@@ -337,3 +337,50 @@ export function pickArc(dayIndex) {
   const clamped = Math.min(Math.max(week, 0), ARC_LINES.length - 1);
   return { week: clamped, line: ARC_LINES[clamped] };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE DAILY SEED — DREAMERS-002 §1.2. Fourteen territories, one a day.
+// ─────────────────────────────────────────────────────────────────────────────
+// Stateless by the clock, like the topic and the arc. The day turns at 00:00 in
+// America/Detroit. The ticket names Python's `zoneinfo`; this loop is Node, so the same
+// IANA lookup is Intl.DateTimeFormat with timeZone. Nothing here reads the machine's
+// local zone: the calendar date in Detroit is taken first and the arithmetic is done on
+// whole calendar days, so a 23- or 25-hour DST day cannot move the count.
+
+export const SEED_ZONE = 'America/Detroit';
+export const SEED_COUNT = 14;
+const SEED_EPOCH_UTC = Date.UTC(2026, 10, 2);
+const SEED_DATE = new Intl.DateTimeFormat('en-US', {
+  timeZone: SEED_ZONE,
+  calendar: 'gregory',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+});
+
+/** Whole days since 2026-11-02 on the Detroit calendar. Negative before it. */
+export function seedDayNumber(nowMs = Date.now()) {
+  const p = Object.fromEntries(SEED_DATE.formatToParts(new Date(nowMs)).map((x) => [x.type, x.value]));
+  return Math.round((Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) - SEED_EPOCH_UTC) / 86_400_000);
+}
+
+/** dreamers-seeds.json text → the fourteen entries, or [] if it is not exactly that. */
+export function parseSeeds(text) {
+  try {
+    const list = JSON.parse(String(text ?? ''));
+    const fit =
+      Array.isArray(list) &&
+      list.length === SEED_COUNT &&
+      list.every((s) => s?.id != null && typeof s.seed === 'string' && s.seed && Array.isArray(s.avoid));
+    return fit ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The entry for a day: (days since 2026-11-02) mod 14, floored so day -1 wraps to the last. */
+export function pickSeed(dayNumber, seeds) {
+  if (!Array.isArray(seeds) || seeds.length === 0) return null;
+  const n = seeds.length;
+  return seeds[((Math.trunc(dayNumber) % n) + n) % n];
+}
