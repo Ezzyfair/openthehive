@@ -9,6 +9,7 @@
 // after sending: it is the path for reading the email on another device.
 // ----------------------------------------------------------------------------
 import React, { useEffect, useState } from 'react';
+import { INBOX_LINE } from '@/lib/member-copy';
 
 export default function MemberLoginPage() {
   const [email, setEmail] = useState('');
@@ -94,6 +95,10 @@ export default function MemberLoginPage() {
       <h1 style={{ fontFamily: 'Cormorant Garamond,serif', fontSize: 34, marginBottom: 8 }}>Your Bees</h1>
       <p style={{ color: 'var(--muted, #6b6257)', fontSize: 14, lineHeight: 1.7, marginBottom: 28 }}>
         Sign in with the email address on your membership. We send a one-time link — there is no password.
+      </p>
+      {/* MEMBER-002 item 5 (MS3) — whoever reads the inbox can manage the bee. */}
+      <p style={{ color: 'var(--muted, #6b6257)', fontSize: 14, lineHeight: 1.7, marginTop: -16, marginBottom: 28 }}>
+        {INBOX_LINE}
       </p>
 
       {sent && (

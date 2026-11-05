@@ -28,6 +28,7 @@ import {
   viewState,
   type ChatMessage,
 } from '@/lib/chat-view';
+import { REPLY_BOX_NOTE } from '@/lib/member-copy';
 
 // useLayoutEffect warns during the server render of a client component.
 const useBeforePaint = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -41,7 +42,8 @@ function joinPages(earlier: ChatMessage[], latest: ChatMessage[]): ChatMessage[]
 }
 
 interface ChamberPayload {
-  chamber: { id: string; title?: string | null; description?: string | null } | null;
+  /** MEMBER-002 item 6 — a personal chamber carries `subtitle`, not `description`. */
+  chamber: { id: string; title?: string | null; subtitle?: string | null } | null;
   room?: { id: string; title?: string | null; description?: string | null } | null;
   messages: ChatMessage[];
   next_cursor?: number;
@@ -66,7 +68,12 @@ export default function MemberChat({
   lane?: 'chamber' | 'colony';
 }) {
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
-  const [room, setRoom] = useState<{ id?: string; title?: string | null; description?: string | null } | null>(null);
+  const [room, setRoom] = useState<{
+    id?: string;
+    title?: string | null;
+    description?: string | null;
+    subtitle?: string | null;
+  } | null>(null);
   const [chamberNull, setChamberNull] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -311,8 +318,13 @@ export default function MemberChat({
             {lane === 'chamber' && (
               <p className="text-[12px] text-hive-sub mb-2">Coaches, Elders and the Oracle are AI personas operated by The Hive.</p>
             )}
-            {room?.description && (
-              <p className="text-[13px] text-hive-sub leading-relaxed">{room.description}</p>
+            {/* MEMBER-002 item 6 — a personal chamber shows the subtitle the server built
+                from the agents row; its stored description is never rendered. A colony
+                room keeps its stored description. */}
+            {lane === 'chamber' ? (
+              room?.subtitle && <p className="text-[13px] text-hive-sub leading-relaxed">{room.subtitle}</p>
+            ) : (
+              room?.description && <p className="text-[13px] text-hive-sub leading-relaxed">{room.description}</p>
             )}
           </div>
 
@@ -358,6 +370,8 @@ export default function MemberChat({
           {/* MEMBER-001 item 5 — the session is the credential. No key reaches this page. */}
           {lane === 'chamber' && (
             <form ref={composerRef} onSubmit={sendReply} className="mt-4">
+              {/* MEMBER-002 item 4 — who reads the reply box, directly above it. */}
+              <p className="text-[12px] text-hive-sub mb-2">{REPLY_BOX_NOTE}</p>
               <textarea
                 aria-label={`Write to ${beeName || 'your bee'}`}
                 value={draft}

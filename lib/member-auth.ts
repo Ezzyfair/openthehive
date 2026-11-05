@@ -24,16 +24,20 @@ export function normalizeEmail(raw: unknown): string | null {
   return email;
 }
 
-/** Digits only, so "482 913" as printed in the mail is accepted as typed. */
+/** Digits only, so "4829 1306" as printed in the mail is accepted as typed. */
 export function normalizeCode(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const code = raw.replace(/\s+/g, '');
   return /^\d{6,10}$/.test(code) ? code : null;
 }
 
-/** 482913 -> 482 913, the way the mail prints it. */
+/**
+ * MEMBER-002 item 3 — 48291306 -> 4829 1306, the way the mail prints it: two halves,
+ * readable on a phone. Display only; the code and its length are unchanged.
+ */
 export function formatCode(code: string): string {
-  return `${code.slice(0, 3)} ${code.slice(3)}`;
+  const half = Math.ceil(code.length / 2);
+  return `${code.slice(0, half)} ${code.slice(half)}`;
 }
 
 /** Rate-limit buckets are stored; an address is not something to store in a key. */

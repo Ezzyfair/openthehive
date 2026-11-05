@@ -3,6 +3,7 @@ import { STRIPE_TIER_TO_CANONICAL } from '@/lib/tier';
 import { createClient } from '@supabase/supabase-js';
 import { sendEmail } from '../../../../lib/mail/sendEmail';
 import { assignCohort } from '@/lib/cohort-assignment';
+import { sendWelcomeOnce } from '@/lib/email/welcome';
 
 function getSupabase() {
   return createClient(
@@ -425,6 +426,14 @@ export async function POST(req: NextRequest) {
           </div>
         `,
       });
+    }
+
+    // MEMBER-002 item 1 (R4) — every member is welcomed. Once per address, by the
+    // email log; a later checkout for the same address does not send it again.
+    try {
+      await sendWelcomeOnce({ supabase, to: email, site: req.nextUrl.origin, agentId: agent?.id || null });
+    } catch (welcomeErr: any) {
+      console.error('welcome: Scout-path welcome failed', String(welcomeErr?.message || welcomeErr));
     }
 
     return NextResponse.json({
