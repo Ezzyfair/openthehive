@@ -10,6 +10,7 @@ import type Stripe from 'stripe';
 import { railStripe } from '@/lib/rail/stripe';
 import { railAdmin } from '@/lib/rail/db';
 import { claimEvent, handleStripeEvent, recordWebhookFailure } from '@/lib/rail/webhook-handler';
+import { welcomeAfterCheckout } from '@/lib/email/welcome';
 
 // ----------------------------------------------------------------------------
 // THE HIVE · the platform Stripe webhook. RAIL-DESIGN-v1.1 §5. NIK-RAIL-004.
@@ -95,5 +96,9 @@ export async function POST(req: NextRequest) {
     { stripe, db: supabase, now: () => new Date() },
     event,
   );
+  // MEMBER-002 item 1 (R4) — the welcome, after the money handling and outside it.
+  // Only a handled checkout.session.completed sends; it never throws and never
+  // changes the response. Once per address, by the email log (lib/email/welcome.ts).
+  await welcomeAfterCheckout(supabase, event, result, req.nextUrl.origin);
   return NextResponse.json(result.body, { status: result.status });
 }

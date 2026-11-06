@@ -22,6 +22,7 @@ import { BeeError } from '@/lib/antenna/errors';
 import { ownedAgentId, resolveMemberSession } from '@/lib/antenna/member';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
 import { humanLabel, memberErrorResponse, memberJson, parsePageQuery, shapePage, sinceIso } from '@/lib/member-reads';
+import { personalChamberView } from '@/lib/member-copy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,10 +71,15 @@ export async function GET(req: NextRequest) {
     // server read instead of a browser anon-key poll (commit 4 fix 3).
     const { data: agentRow } = await admin
       .from('agents')
-      .select('status, name, human_name')
+      .select('status, name, human_name, soul')
       .eq('id', agentId)
       .maybeSingle();
-    const agentInfo = agentRow as { status: string | null; name: string | null; human_name: string | null } | null;
+    const agentInfo = agentRow as {
+      status: string | null;
+      name: string | null;
+      human_name: string | null;
+      soul: string | null;
+    } | null;
     const agentStatus = agentInfo?.status ?? null;
 
     // Carry-in 8 (Nikita 001b LOW) — belt and braces. getOwnChamberId already resolved
@@ -152,7 +158,7 @@ export async function GET(req: NextRequest) {
     }
 
     return memberJson({
-      chamber,
+      chamber: personalChamberView(chamber, agentInfo),
       agent_status: agentStatus,
       bee_name: agentInfo?.name ?? null,
       ...shapePage(messageRows, agents, page, humanLabel(agentInfo?.human_name)),

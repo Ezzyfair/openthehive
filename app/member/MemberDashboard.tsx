@@ -14,7 +14,8 @@ import Link from 'next/link';
 import { ANTENNA_SHA256, LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 // HUMAN-WINDOW-001 commit 4 — the chamber link and the colony room list. The dashboard
 // had neither, which is why the only human window onto a chamber was the public page.
-import { readJson } from '@/lib/chat-view';
+import { readJson, relativeTime } from '@/lib/chat-view';
+import { BEE_CARD_SENTENCE, lastAntennaContact } from '@/lib/member-copy';
 
 type Platform = 'linux' | 'macos' | 'windows';
 
@@ -208,6 +209,7 @@ export default function MemberDashboard({ email }: { email: string }) {
   const bee = bees?.[0] ?? null;
   const usableInstall = bee?.install_tokens.find((t) => t.usable) ?? null;
   const hadInstall = (bee?.install_tokens.length ?? 0) > 0;
+  const lastContact = lastAntennaContact(bee?.tokens);
   const runLine = RUN[platform].replace('TOKEN', issued ? issued.token : '<your install token>');
 
   const box: React.CSSProperties = {
@@ -248,20 +250,39 @@ export default function MemberDashboard({ email }: { email: string }) {
         </p>
       )}
 
+      {/* ── YOUR BEE (MEMBER-002 item 2, R3) ─────────────────────────────
+          The page leads with the bee. Only what /api/member/bees already returns:
+          name, soul, the R3 card sentence, last Antenna contact. Open gates are not
+          in that read, so they are not shown here rather than fetched. */}
+      <section data-card="bee-state" style={box}>
+        <h2 style={{ fontSize: 17, marginBottom: 4 }}>
+          {bee?.agent ? `${bee.agent.soul_emoji ?? '🐝'} ${bee.agent.name}` : 'Your bee'}
+        </h2>
+        {bee?.agent?.soul && (
+          <p style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 8 }}>{bee.agent.soul}</p>
+        )}
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 8 }}>{BEE_CARD_SENTENCE}</p>
+        {loadError ? (
+          <p role="alert" style={{ color: '#b3261e', fontSize: 13 }}>{loadError}</p>
+        ) : !bees ? (
+          <p style={{ fontSize: 13, color: 'var(--muted, #6b6257)' }}>Loading…</p>
+        ) : (
+          <p style={{ fontSize: 13, color: 'var(--muted, #6b6257)' }}>
+            Last Antenna contact: {lastContact ? relativeTime(lastContact) : 'not yet'}
+          </p>
+        )}
+      </section>
+
       {/* ── YOUR BEE'S CHAMBER ──────────────────────────────────────────── */}
-      <section style={box}>
-        <h2 style={{ fontSize: 17, marginBottom: 4 }}>Your bee&apos;s chamber</h2>
-        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>
-          The room where your bee and its coach work. Read it here and write to your bee; your bee
-          reads and answers through Antenna.
-        </p>
+      <section data-card="chamber" style={box}>
+        <h2 style={{ fontSize: 17, marginBottom: 14 }}>Your bee&apos;s chamber</h2>
         <Link href="/member/chamber" style={{ fontSize: 13.5, fontWeight: 700, textDecoration: 'underline' }}>
           Open your bee&apos;s chamber →
         </Link>
       </section>
 
       {/* ── COLONY ROOMS ────────────────────────────────────────────────── */}
-      <section style={box}>
+      <section data-card="colony-rooms" style={box}>
         <h2 style={{ fontSize: 17, marginBottom: 4 }}>Colony rooms</h2>
         <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>
           Every member reads the full history of these.
