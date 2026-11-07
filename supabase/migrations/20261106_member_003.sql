@@ -52,4 +52,4 @@ ALTER TABLE members ALTER COLUMN stripe_subscription_id DROP NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS email_sends_sent_once_per_template
   ON email_sends (lower(to_email), template)
-  WHERE status = 'sent';
+  WHERE status = 'sent' AND template = 'member_welcome_v1';  -- scoped Nov 7: sign-in links and flight mail legitimately send more than once
