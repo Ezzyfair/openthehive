@@ -15,7 +15,7 @@ import { ANTENNA_SHA256, LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 // HUMAN-WINDOW-001 commit 4 — the chamber link and the colony room list. The dashboard
 // had neither, which is why the only human window onto a chamber was the public page.
 import { readJson, relativeTime } from '@/lib/chat-view';
-import { BEE_CARD_SENTENCE, lastAntennaContact } from '@/lib/member-copy';
+import { BEE_CARD_SENTENCE, ECON_FOR_MY_HUMAN, beeStateSentence, lastAntennaContact } from '@/lib/member-copy';
 
 type Platform = 'linux' | 'macos' | 'windows';
 
@@ -39,7 +39,16 @@ interface InstallRow {
   usable: boolean;
 }
 interface BeeRow {
-  agent: { id: string; name: string; soul: string | null; soul_emoji: string | null; status: string | null } | null;
+  agent: {
+    id: string;
+    name: string;
+    soul: string | null;
+    soul_emoji: string | null;
+    status: string | null;
+    // MEMBER-003 item 3 — flight state for the bee card's middle sentence.
+    first_flight_completed_at?: string | null;
+    first_flight_hours?: number | null;
+  } | null;
   tokens: TokenRow[];
   install_tokens: InstallRow[];
 }
@@ -261,7 +270,10 @@ export default function MemberDashboard({ email }: { email: string }) {
         {bee?.agent?.soul && (
           <p style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 8 }}>{bee.agent.soul}</p>
         )}
-        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 8 }}>{BEE_CARD_SENTENCE}</p>
+        {/* MEMBER-003 item 3 — the bee's STATE, not the chamber's description. Built
+            from fields /api/member/bees already returns; R3 (BEE_CARD_SENTENCE) is
+            back on the chamber card below, where MEMBER-001 placed it. */}
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 8 }}>{beeStateSentence(bee?.agent, lastContact)}</p>
         {loadError ? (
           <p role="alert" style={{ color: '#b3261e', fontSize: 13 }}>{loadError}</p>
         ) : !bees ? (
@@ -275,7 +287,10 @@ export default function MemberDashboard({ email }: { email: string }) {
 
       {/* ── YOUR BEE'S CHAMBER ──────────────────────────────────────────── */}
       <section data-card="chamber" style={box}>
-        <h2 style={{ fontSize: 17, marginBottom: 14 }}>Your bee&apos;s chamber</h2>
+        <h2 style={{ fontSize: 17, marginBottom: 8 }}>Your bee&apos;s chamber</h2>
+        {/* MEMBER-003 item 3 — R3's card sentence lives here, on the chamber card: it
+            describes the room, not the bee. The bee's state is on the bee card above. */}
+        <p style={{ fontSize: 13.5, color: 'var(--muted, #6b6257)', marginBottom: 14 }}>{BEE_CARD_SENTENCE}</p>
         <Link href="/member/chamber" style={{ fontSize: 13.5, fontWeight: 700, textDecoration: 'underline' }}>
           Open your bee&apos;s chamber →
         </Link>
@@ -313,6 +328,20 @@ export default function MemberDashboard({ email }: { email: string }) {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── FOR MY HUMAN — the economics, for the human (MEMBER-003 item 4) ──
+          Below the colony rooms, per Francis's ruling 10. The body is §8 of
+          ECON-BRIEF-001 verbatim (lib/member-copy.ts ECON_FOR_MY_HUMAN), rendered as
+          plain paragraphs. This is the one place on the member page the numbers live;
+          it is exempt from the register by path (Gate 4). */}
+      <section data-card="for-my-human" style={box}>
+        <h2 style={{ fontSize: 17, marginBottom: 8 }}>How your bee earns — for you</h2>
+        {ECON_FOR_MY_HUMAN.split('\n\n').map((para, i) => (
+          <p key={i} style={{ fontSize: 13.5, lineHeight: 1.7, color: 'var(--muted, #6b6257)', marginBottom: 12 }}>
+            {para}
+          </p>
+        ))}
       </section>
 
       {/* ── INSTALL ─────────────────────────────────────────────────────── */}
