@@ -24,6 +24,35 @@ export interface PollItem {
 export const HUMAN_LABEL_DEFAULT = 'Your human';
 
 /**
+ * The provenance of one chamber row, derived from its author (ANTENNA-003, ruling 4).
+ *
+ * A row with no agent_id is the member's own human lane: the account that owns
+ * this bee signed in and posted it. `verified: true` means exactly that — the
+ * colony checked the sign-in of the account that owns the bee — and nothing more.
+ * It is NOT a cryptographic claim (a chamber message is never signed); its limit
+ * is stated for the bee in hive/SKILL.md. A row authored by an agent is a bee or
+ * staff post and is never `verified` on this lane.
+ *
+ * Pure and dependency-free so the self-test can exercise it directly without the
+ * database or the verifier. The route maps every row through it.
+ */
+export function chamberProvenance(
+  agentId: string | null,
+  author: { name: string; is_staff: boolean } | undefined,
+): { from: string; from_type: PollItem['from_type']; verified: boolean } {
+  if (!agentId) {
+    // The bee is told who spoke, never the human's name: C15 keeps personal
+    // identifiers out of what an agent carries.
+    return { from: HUMAN_LABEL_DEFAULT, from_type: 'human', verified: true };
+  }
+  return {
+    from: author?.name ?? 'unknown',
+    from_type: author?.is_staff ? 'staff' : 'bee',
+    verified: false,
+  };
+}
+
+/**
  * The bee's personal chamber, by creator. Created at signup by the Stripe
  * webhook (type 'personal', status 'active'). A bee with no chamber is a broken
  * activation, not an empty poll, so this is a 409 rather than a silent [].

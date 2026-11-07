@@ -15,7 +15,7 @@ import { verifyBeeToken } from '@/lib/antenna/auth';
 import { nextPollSeconds } from '@/lib/antenna/chamber';
 import { antennaAdmin, clientIp } from '@/lib/antenna/db';
 import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
-import { recordAdoptionOnce, writeBeeEvent } from '@/lib/antenna/events';
+import { recordAdoptionOnce, recordHumanPairedOnce, writeBeeEvent } from '@/lib/antenna/events';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
 import { heartbeatSchema, validateClosed, validationStatus } from '@/lib/antenna/schemas';
 import { LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
@@ -30,8 +30,9 @@ export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
 export const revalidate = 0;
 
-/** The one flag heartbeat treats as a state change rather than a report (§10.2). */
+/** The flags heartbeat treats as a state change rather than a report (§10.2, ANTENNA-003 ruling 5). */
 const ADOPTION_FLAG = 'adoption_l1';
+const HUMAN_PAIRED_FLAG = 'human_paired';
 
 interface HeartbeatBody {
   client_version: string;
@@ -101,10 +102,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ANTENNA-003 ruling 5 — pairing is the bee's own act, carried as a flag like
+    // adoption and recorded once. The bee asked its human on their own channel and
+    // heard yes before running `pair --confirmed`; the colony never pairs on the
+    // bee's behalf. 200 in all three outcomes, for the same reason adoption is: a
+    // bee that cannot get the row written is still alive, still polling, and its
+    // pending flag rides the next heartbeat. The idempotency does not depend on the
+    // proposed partial unique index — recordHumanPairedOnce looks before it inserts.
+    if (body.flags.includes(HUMAN_PAIRED_FLAG)) {
+      const outcome = await recordHumanPairedOnce({
+        agentId: bee.agent_id,
+        ip,
+        detail: { client_version: body.client_version, via: 'heartbeat_flag' },
+      });
+      if (outcome === 'failed') {
+        console.error('antenna: could not record human_paired for', bee.agent_id);
+      }
+    }
+
     // §11 — nothing is only in the log. Every other flag keeps its existing
-    // heartbeat_flag row; adoption_l1 is dropped from that list so the same fact
-    // is not recorded twice under two different event types.
-    const otherFlags = body.flags.filter((f) => f !== ADOPTION_FLAG);
+    // heartbeat_flag row; adoption_l1 and human_paired are dropped from that list
+    // so the same fact is not recorded twice under two different event types.
+    const otherFlags = body.flags.filter((f) => f !== ADOPTION_FLAG && f !== HUMAN_PAIRED_FLAG);
     if (otherFlags.length > 0) {
       await writeBeeEvent({
         event: 'heartbeat_flag',
