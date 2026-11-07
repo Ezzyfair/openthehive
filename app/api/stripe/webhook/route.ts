@@ -97,8 +97,19 @@ export async function POST(req: NextRequest) {
     event,
   );
   // MEMBER-002 item 1 (R4) — the welcome, after the money handling and outside it.
-  // Only a handled checkout.session.completed sends; it never throws and never
-  // changes the response. Once per address, by the email log (lib/email/welcome.ts).
-  await welcomeAfterCheckout(supabase, event, result, req.nextUrl.origin);
+  // Only a handled checkout.session.completed sends; once per address, by the email
+  // log (lib/email/welcome.ts). welcomeAfterCheckout is written never to throw, but
+  // MEMBER-003 item 5 (LOW-1) makes that guarantee belong to the ROUTE, not to trust
+  // in the callee: a route-level try/catch so that no welcome failure — thrown or
+  // otherwise — can ever change the response Stripe receives for a processed payment.
+  try {
+    await welcomeAfterCheckout(supabase, event, result, req.nextUrl.origin);
+  } catch (welcomeErr: any) {
+    console.error('stripe webhook: welcome after checkout failed, response unchanged', {
+      event_id: event.id,
+      event_type: event.type,
+      message: String(welcomeErr?.message || welcomeErr),
+    });
+  }
   return NextResponse.json(result.body, { status: result.status });
 }

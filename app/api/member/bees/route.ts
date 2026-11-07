@@ -29,9 +29,12 @@ export async function GET(req: NextRequest) {
     const agentId = await ownedAgentId(session);
     const admin = antennaAdmin();
 
+    // MEMBER-003 item 3 — first_flight_completed_at and first_flight_hours are added
+    // to this same select (no new query) so the dashboard can render the bee's STATE
+    // as the bee card's middle sentence. Nothing sensitive: both are flight progress.
     const { data: agent } = await admin
       .from('agents')
-      .select('id, name, soul, soul_emoji, status')
+      .select('id, name, soul, soul_emoji, status, first_flight_completed_at, first_flight_hours')
       .eq('id', agentId)
       .maybeSingle();
 

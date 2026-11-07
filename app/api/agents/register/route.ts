@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { STRIPE_TIER_TO_CANONICAL } from '@/lib/tier';
 import { createClient } from '@supabase/supabase-js';
-import { sendEmail } from '../../../../lib/mail/sendEmail';
+// MEMBER-003 item 2 — the scout_welcome_v1 send is removed from the Scout path, so
+// lib/mail/sendEmail is no longer called directly here. The welcome now leaves through
+// sendWelcomeOnce (lib/email/welcome.ts) only. The old template is retained below,
+// unsent, inside a deprecation block.
 import { assignCohort } from '@/lib/cohort-assignment';
 import { sendWelcomeOnce } from '@/lib/email/welcome';
+import { ensureScoutMember } from '@/lib/member-provision';
 
 function getSupabase() {
   return createClient(
@@ -281,6 +285,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: agentError.message }, { status: 500 });
     }
 
+    // MEMBER-003 item 1 (MED-1) — a Scout's human is a member from day one. Create or
+    // reuse the members row for this human's email (lowercased), tier 'scout', linked
+    // to the agent exactly as a paid member's row links to its bee: members.agent_id →
+    // agents.id, keyed on email. That link is what makes the welcome's "sign in at
+    // /member/login" land on a real session — resolveMemberSession joins auth email →
+    // members.email → members.agent_id (lib/antenna/member.ts). Before this, a Scout
+    // created no members row, so the sign-in silently failed (NIK-MEMBER-002 MED-1).
+    //
+    // Idempotent on email: ignoreDuplicates (INSERT … ON CONFLICT DO NOTHING against
+    // the members.email unique key) means a second Scout creation for the same human
+    // inserts nothing and never clobbers an existing row — including a paid row. No
+    // Stripe customer exists yet, so stripe_customer_id / stripe_subscription_id stay
+    // null, and the rail tolerates that: every rail read of members keys on a Stripe id
+    // (lib/rail/webhook-handler.ts) or stripe_subscription_id (lib/rail/accrual.ts
+    // cancelMembership), and a null never matches a real customer. The human's own
+    // checkout later upserts this same email row and fills the Stripe columns in.
+    //
+    // NOT fatal: if production still carries a NOT NULL on a Stripe column (see the
+    // proposed 20261106_member_003 migration), this write fails and is logged, but the
+    // agent is still created. Sign-in resolves once the migration is applied.
+    const memberResult = await ensureScoutMember(supabase, {
+      email,
+      agentId: agent.id,
+      referralCode: agentReferralCode,
+    });
+    if ('error' in memberResult) {
+      console.error(
+        'register: Scout members row upsert failed — the human sign-in may not resolve until the member_003 migration is applied',
+        memberResult.error,
+      );
+    }
 
     // Assign Day-1 skill cohort per V4 §2.10 (Scout tier = 1 trial skill)
     try {
@@ -379,7 +414,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Send welcome email
+    // MEMBER-003 item 2 — DEPRECATED, no longer sent: scout_welcome_v1 is retained (not deleted) for the email-log history; the MEMBER-002 member welcome below is the only welcome now.
+    /* DEPRECATED scout_welcome_v1 — retained unsent (MEMBER-003 item 2):
     if (email) {
       await sendEmail({
         supabase,
@@ -427,6 +463,7 @@ export async function POST(req: NextRequest) {
         `,
       });
     }
+    */
 
     // MEMBER-002 item 1 (R4) — every member is welcomed. Once per address, by the
     // email log; a later checkout for the same address does not send it again.
