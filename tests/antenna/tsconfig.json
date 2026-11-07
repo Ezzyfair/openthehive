@@ -1,0 +1,26 @@
+{
+  "//": "ANTENNA-003 · the server-side self-test build. Mirrors tests/rail/tsconfig.json:",
+  "//2": "the root tsconfig is noEmit with module esnext for Next.js, but node --test needs",
+  "//3": "emitted CommonJS it can require. Nothing here affects the app build. rootDir is",
+  "//4": "pinned so the emitted tree is .antenna-test-dist/<repo path> whatever the input set.",
+  "//5": "Only lib/antenna is pulled in — the two routes are exercised through the pure",
+  "//6": "helpers they now call (chamberProvenance, recordHumanPairedOnce), so no route,",
+  "//7": "no next/server and no env are needed here.",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": false,
+    "types": ["node"],
+    "baseUrl": "../..",
+    "rootDir": "../..",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["./**/*.ts", "../../lib/antenna/**/*.ts"]
+}

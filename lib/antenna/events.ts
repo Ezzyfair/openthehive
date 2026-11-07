@@ -7,9 +7,13 @@
 // here is best-effort and swallows its own error after logging. The row is the
 // record, not the control flow.
 // ----------------------------------------------------------------------------
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { antennaAdmin } from './db';
 
-/** The eleven values of the bee_client_events.event CHECK, verbatim from §9. */
+/**
+ * The bee_client_events.event CHECK values (§9), plus `human_paired` added by
+ * ANTENNA-003 ruling 5 (migration 20261107_human_paired.sql widens the CHECK).
+ */
 export type BeeEvent =
   | 'activate'
   | 'revoke'
@@ -20,8 +24,16 @@ export type BeeEvent =
   | 'auth_fail'
   | 'credential_in_chamber'
   | 'adoption_l1'
+  | 'human_paired'
   | 'unreachable'
   | 'unsent_replies';
+
+/**
+ * The slice of the Supabase client these writers use. Declared so the self-test
+ * can inject an in-memory double without standing up a real client, and so the
+ * routes can keep calling with no second argument.
+ */
+export type EventsAdmin = Pick<SupabaseClient, 'from'>;
 
 export interface BeeEventInput {
   event: BeeEvent;
@@ -79,6 +91,58 @@ export async function recordAdoptionOnce(opts: {
     return 'failed';
   } catch (e) {
     console.error('antenna: adoption_l1 insert threw', e);
+    return 'failed';
+  }
+}
+
+/**
+ * Records that a bee's human has been paired, exactly once (ANTENNA-003 ruling 5).
+ *
+ * Pairing is a STATE, like adoption: the bee's human either is the chamber's human
+ * lane or is not. The forward migration adds a partial unique index so a racing
+ * second heartbeat is turned into a 23505, caught here as `already`.
+ *
+ * TOLERATES THE INDEX BEING ABSENT. recordAdoptionOnce leans entirely on 23505 and
+ * so would insert a second row on a database where the index was never applied.
+ * Pairing cannot assume that, because its migration is proposed, not yet run: the
+ * heartbeat must already be idempotent before Nikita rules on the SQL. So it looks
+ * first — a count of existing `human_paired` rows for this agent — and only inserts
+ * when there are none. With the index that pre-check is belt-and-braces; without
+ * it, it is the whole guarantee. Either way a second call returns `already` and no
+ * second row is written.
+ *
+ * Best-effort, like every write here: a failure never fails the heartbeat (ruling
+ * 5 — a 23505 or an existing row is 200, and so is a `failed` write).
+ */
+export async function recordHumanPairedOnce(opts: {
+  agentId: string;
+  ip?: string | null;
+  detail?: Record<string, unknown>;
+  admin?: EventsAdmin;
+}): Promise<'inserted' | 'already' | 'failed'> {
+  const admin = opts.admin ?? antennaAdmin();
+  try {
+    const { count, error: countErr } = await admin
+      .from('bee_client_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('event', 'human_paired')
+      .eq('agent_id', opts.agentId);
+    if (!countErr && (count ?? 0) > 0) return 'already';
+
+    const { error } = await admin
+      .from('bee_client_events')
+      .insert({
+        agent_id: opts.agentId,
+        event: 'human_paired',
+        ip: opts.ip ?? null,
+        detail_json: opts.detail ?? {},
+      });
+    if (!error) return 'inserted';
+    if ((error as { code?: string }).code === '23505') return 'already';
+    console.error('antenna: human_paired insert failed', error.message);
+    return 'failed';
+  } catch (e) {
+    console.error('antenna: human_paired insert threw', e);
     return 'failed';
   }
 }

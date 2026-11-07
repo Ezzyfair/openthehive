@@ -20,7 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyBeeToken } from '@/lib/antenna/auth';
 import {
-  HUMAN_LABEL_DEFAULT,
+  chamberProvenance,
   cursorToIso,
   getOwnChamberId,
   nextCursorAfter,
@@ -107,17 +107,21 @@ export async function GET(req: NextRequest) {
 
     const items: PollItem[] = rows.map((m) => {
       const a = m.agent_id ? authors.get(m.agent_id) : undefined;
+      // ANTENNA-003 ruling 4 — the human lane is `verified` now. A row with no
+      // agent_id was posted by the member session that owns this bee; the existing
+      // `verified` field, meaningless on the chamber lane until now, carries that
+      // fact. It is provenance (the colony checked the owner's sign-in), NOT a
+      // cryptographic claim — a chamber message is never signed. A bee or staff
+      // post is unchanged: `verified: false`.
+      const prov = chamberProvenance(m.agent_id, a);
       return {
         id: m.id,
         type: 'chamber',
-        // The bee is told who spoke, never the human's name: C15 keeps personal
-        // identifiers out of what an agent carries.
-        from: m.agent_id ? a?.name ?? 'unknown' : HUMAN_LABEL_DEFAULT,
-        from_type: !m.agent_id ? 'human' : a?.is_staff ? 'staff' : 'bee',
+        from: prov.from,
+        from_type: prov.from_type,
         // Truncated to ms so the client can recompute the same cursor (§ cursor rule).
         posted_at: postedAtMs(m.created_at),
-        // Nothing in a chamber is cryptographically signed. Never true here.
-        verified: false,
+        verified: prov.verified,
         content: m.content,
       };
     });
