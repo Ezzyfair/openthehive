@@ -427,9 +427,9 @@ export default function MemberDashboard({ email }: { email: string }) {
           since step 2, {TERMINAL_APP[platform]} will say it cannot find the file.
         </p>
         <p style={stepText}>
-          <strong>Leave the window open.</strong> Antenna runs for as long as that window stays open, and
-          your bee stops when you close it. Setting it up to start on its own, in the background, comes
-          later — for now, leaving the window open is the whole of it.
+          That&apos;s the whole install. Antenna now starts on its own whenever this computer is on, with
+          no window to keep open; you can close this one. Your member page shows &quot;Last Antenna
+          contact&quot; so you can see it working.
         </p>
         {platform === 'windows' && (
           <p style={stepText}>

@@ -191,7 +191,23 @@ test('MEMBER-003 · ECON_FOR_MY_HUMAN is §8 of the brief, byte for byte', () =>
   assert.equal(ECON_FOR_MY_HUMAN, fixture, 'the constant matches the §8 fixture exactly');
 
   const sha = nodeCrypto.createHash('sha256').update(ECON_FOR_MY_HUMAN, 'utf8').digest('hex');
-  assert.equal(sha, 'e1f4db6c144b1b312faa09c6f58bdbeb3978d2ed7fda31155d5d674df5d1f796', 'the §8 digest in lib/member-copy.ts is the one in force');
+  assert.equal(sha, '5b75354f8b52f1981d81e0aa037f31976ee4c442d3810345fefa3b0c348edeb8', 'the §8 digest in lib/member-copy.ts is the one in force');
+});
+
+// ── MEMBER-004 · the antenna copy of the brief hashes to the v1.2 digest ──────
+
+test('MEMBER-004 · public/antenna/ECON-BRIEF.md is ECON-BRIEF-001 v1.2, byte for byte', () => {
+  const briefPath = nodePath.join(REPO_ROOT, 'public/antenna/ECON-BRIEF.md');
+  const brief: Buffer = nodeFs.readFileSync(briefPath);
+  const sha = nodeCrypto.createHash('sha256').update(brief).digest('hex');
+  assert.ok(sha.startsWith('f9931d640f8a'), `the antenna brief hashes to the v1.2 digest (got ${sha})`);
+});
+
+// ── MEMBER-004 · the install copy no longer tells the member to keep a window open ─
+
+test('MEMBER-004 · the install copy no longer says "Leave the window open"', () => {
+  const src: string = nodeFs.readFileSync(nodePath.join(REPO_ROOT, 'app/member/MemberDashboard.tsx'), 'utf8');
+  assert.ok(!src.includes('Leave the window open'), 'the step-4 install copy must not tell the member to leave a window open');
 });
 
 // ── item 5 · the webhook route returns the handler's response when the welcome throws ─
