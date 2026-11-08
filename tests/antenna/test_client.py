@@ -276,14 +276,392 @@ class TestLegacyConfigRunsLoop(FlightLogBase):
 
 
 class TestRelease(unittest.TestCase):
-    def test_release_check_in_sync_at_030(self):
+    def test_release_check_in_sync_at_031(self):
         out = subprocess.run(
             ["node", "scripts/antenna-release.mjs", "--check"],
             cwd=str(REPO), capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("in sync", out.stdout)
-        self.assertIn("0.3.0", out.stdout)
+        self.assertIn("0.3.1", out.stdout)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTENNA-004 — client 0.3.1
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _FakeCompleted:
+    def __init__(self, returncode=0, stdout=b"", stderr=b""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class _FakeActivateResp:
+    """A urlopen() context manager that returns a canned activation body."""
+    def __init__(self, body):
+        self._b = __import__("json").dumps(body).encode("utf-8")
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class TestWindowsInterpreter(unittest.TestCase):
+    # item 1 — the service runs pythonw.exe when it is beside python.exe, else
+    # falls back to python.exe and says so. Paths are real temp files so .exists()
+    # is exercised; sys.executable is pointed at them and restored.
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = pathlib.Path(self._tmp.name)
+        self._exe = antenna.sys.executable
+
+    def tearDown(self):
+        antenna.sys.executable = self._exe
+        self._tmp.cleanup()
+
+    def test_pythonw_present_is_chosen(self):
+        (self.d / "python.exe").write_text("x")
+        (self.d / "pythonw.exe").write_text("x")
+        antenna.sys.executable = str(self.d / "python.exe")
+        path, fellback = antenna.windows_interpreter()
+        self.assertTrue(path.lower().endswith("pythonw.exe"))
+        self.assertFalse(fellback)
+
+    def test_pythonw_absent_falls_back(self):
+        (self.d / "python.exe").write_text("x")
+        antenna.sys.executable = str(self.d / "python.exe")
+        path, fellback = antenna.windows_interpreter()
+        self.assertTrue(path.lower().endswith("python.exe"))
+        self.assertFalse(path.lower().endswith("pythonw.exe"))
+        self.assertTrue(fellback)
+
+
+class TestWindowsServiceFallback(unittest.TestCase):
+    # item 2 — when schtasks /Create is refused, install writes the Startup-folder
+    # entry, starts the loop now, and status names the mechanism.
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = pathlib.Path(self._tmp.name)
+        self._env = {k: os.environ.get(k) for k in ("APPDATA", "HIVE_HOME")}
+        os.environ["APPDATA"] = str(self.d / "AppData" / "Roaming")
+        os.environ["HIVE_HOME"] = str(self.d / ".hive")
+        self._exe = antenna.sys.executable
+        (self.d / "python.exe").write_text("x")
+        antenna.sys.executable = str(self.d / "python.exe")
+        self._run = antenna.subprocess.run
+        self._start = antenna._start_detached_loop
+        self.started = {"n": 0}
+        antenna._start_detached_loop = lambda: self.started.__setitem__("n", self.started["n"] + 1)
+
+    def tearDown(self):
+        antenna.subprocess.run = self._run
+        antenna._start_detached_loop = self._start
+        antenna.sys.executable = self._exe
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self._tmp.cleanup()
+
+    def _schtasks_create_denied(self):
+        import subprocess as sp
+
+        def fake(cmd, *a, **k):
+            if cmd[:2] == ["schtasks", "/Create"]:
+                raise sp.CalledProcessError(1, cmd, stderr=b"ERROR: Access is denied.")
+            if cmd[:2] == ["schtasks", "/Query"]:
+                return _FakeCompleted(returncode=1, stdout=b"")
+            if cmd[:2] == ["schtasks", "/Delete"]:
+                return _FakeCompleted(returncode=1)
+            return _FakeCompleted()
+
+        antenna.subprocess.run = fake
+
+    def test_install_writes_startup_and_starts_now(self):
+        self._schtasks_create_denied()
+        rc = antenna._service_windows("install")
+        self.assertEqual(rc, 0)
+        startup = antenna.windows_startup_path()
+        self.assertTrue(startup.exists())
+        self.assertIn("--run", startup.read_text())
+        self.assertEqual(self.started["n"], 1)
+
+    def test_status_names_startup_folder(self):
+        self._schtasks_create_denied()
+        antenna._service_windows("install")
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = antenna._service_windows("status")
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("mechanism: startup-folder", out)
+        self.assertIn("interpreter:", out)
+
+    def test_uninstall_removes_startup_entry(self):
+        self._schtasks_create_denied()
+        antenna._service_windows("install")
+        self.assertTrue(antenna.windows_startup_path().exists())
+        antenna._service_windows("uninstall")
+        self.assertFalse(antenna.windows_startup_path().exists())
+
+
+class TestJoinDoesEverything(FlightLogBase):
+    # item 3 — --join installs the service and appends the memory line; --no-service
+    # and --no-memory opt out. Network and cmd_service are stubbed.
+    def setUp(self):
+        super().setUp()
+        self._urlopen = antenna.urllib.request.urlopen
+        self._request = antenna.request
+        self._cmd_service = antenna.cmd_service
+        self._mech = antenna.service_mechanism
+        self.svc_calls = []
+        antenna.urllib.request.urlopen = lambda req, timeout=None: _FakeActivateResp({
+            "agent_id": "a1", "bee_name": "Echo", "inbox": "echo@x",
+            "bee_token": "hive_bee_tok_secret", "next_poll_seconds": 60, "cursor": 1000,
+        })
+        antenna.request = lambda cfg, method, path, payload=None: antenna.HttpResult(200, {}, None, None)
+        antenna.cmd_service = lambda action, print_only=False: self.svc_calls.append(action) or 0
+        antenna.service_mechanism = lambda: "task"
+
+    def tearDown(self):
+        antenna.urllib.request.urlopen = self._urlopen
+        antenna.request = self._request
+        antenna.cmd_service = self._cmd_service
+        antenna.service_mechanism = self._mech
+        super().tearDown()
+
+    def _agents_text(self):
+        p = pathlib.Path(os.environ["HIVE_AGENTS_FILE"])
+        return p.read_text(encoding="utf-8") if p.exists() else ""
+
+    def test_join_installs_service_and_appends_memory(self):
+        rc = antenna.cmd_join("hive_join_tok", "https://example.invalid", "command", None)
+        self.assertEqual(rc, 0)
+        self.assertIn("install", self.svc_calls)
+        self.assertIn(antenna.memory_line(), self._agents_text())
+
+    def test_no_service_opts_out(self):
+        rc = antenna.cmd_join("hive_join_tok", "https://example.invalid", "command", None, no_service=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.svc_calls, [])
+        self.assertIn(antenna.memory_line(), self._agents_text())
+
+    def test_no_memory_opts_out(self):
+        rc = antenna.cmd_join("hive_join_tok", "https://example.invalid", "command", None, no_memory=True)
+        self.assertEqual(rc, 0)
+        self.assertIn("install", self.svc_calls)
+        self.assertNotIn(antenna.memory_line(), self._agents_text())
+
+
+class TestSkillRefresh(FlightLogBase):
+    # item 4 — refresh on marker mismatch with a backup; no refresh on match;
+    # SOUL-LAYER.md untouched; client_version updated.
+    def _write_skill(self, text):
+        p = antenna.skill_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    def test_refresh_on_mismatch_backs_up_and_leaves_soul(self):
+        self.write_config()
+        self._write_skill("old skill text\n<!-- antenna-skill 0.3.0 -->\n")
+        soul = antenna.layer_path()
+        soul.write_text("MY SOUL LAYER", encoding="utf-8")
+        wrote = antenna.refresh_skill_md(antenna.load_config())
+        self.assertTrue(wrote)
+        self.assertIn("antenna-skill 0.3.1", antenna.skill_path().read_text(encoding="utf-8"))
+        backup = antenna.skill_path().parent / "SKILL-0.3.0.bak.md"
+        self.assertTrue(backup.exists())
+        self.assertIn("old skill text", backup.read_text(encoding="utf-8"))
+        # SOUL-LAYER.md is never touched by the refresh.
+        self.assertEqual(soul.read_text(encoding="utf-8"), "MY SOUL LAYER")
+
+    def test_no_refresh_when_marker_matches(self):
+        self.write_config()
+        self._write_skill(antenna.SKILL_MD)
+        wrote = antenna.refresh_skill_md(antenna.load_config())
+        self.assertFalse(wrote)
+        self.assertEqual(list(antenna.skill_path().parent.glob("SKILL-*.bak.md")), [])
+
+    def test_missing_skill_is_written(self):
+        self.write_config()
+        wrote = antenna.refresh_skill_md(antenna.load_config())
+        self.assertTrue(wrote)
+        self.assertIn("antenna-skill 0.3.1", antenna.skill_path().read_text(encoding="utf-8"))
+
+    def test_refresh_updates_client_version(self):
+        self.write_config()  # written at 0.2.2
+        self._write_skill("old\n<!-- antenna-skill 0.3.0 -->\n")
+        antenna.refresh_skill_md(antenna.load_config())
+        self.assertEqual(antenna.load_config().get("client_version"), "0.3.1")
+
+
+class TestInvokeError(unittest.TestCase):
+    # item 5 — each invoke-error case yields no reply (InvokeError); a good reply
+    # is returned; openclaw keeps its old non-zero-exit behavior (Unreachable).
+    def _cfg(self, mode="command"):
+        return {"mode": mode, "invoke": {"command": ["x"], "timeout_seconds": 5}}
+
+    def _patch_run(self, ret):
+        self._orig = antenna._run_invoke
+        antenna._run_invoke = lambda cfg, framed: ret
+
+    def tearDown(self):
+        if hasattr(self, "_orig"):
+            antenna._run_invoke = self._orig
+
+    def test_empty_reply(self):
+        self._patch_run((0, "   ", ""))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_timeout_signature(self):
+        self._patch_run((0, "LLM request timed out after 30s", ""))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_request_timed_out_signature(self):
+        self._patch_run((0, "Request timed out before a response was generated", ""))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_error_first_token(self):
+        self._patch_run((0, "Error: something broke", ""))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_python_traceback(self):
+        self._patch_run((0, "Traceback (most recent call last):\n  File a.py", ""))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_nonzero_exit(self):
+        self._patch_run((1, "", "boom"))
+        with self.assertRaises(antenna.InvokeError):
+            antenna.deliver(self._cfg(), {"content": "hi"})
+
+    def test_good_reply_is_returned(self):
+        self._patch_run((0, "a real answer", ""))
+        self.assertEqual(antenna.deliver(self._cfg(), {"content": "hi"}), "a real answer")
+
+    def test_error_word_not_at_start_is_fine(self):
+        # "Error:" only trips as the FIRST token; a sentence mentioning it posts.
+        self._patch_run((0, "No error: the build is green", ""))
+        self.assertEqual(
+            antenna.deliver(self._cfg(), {"content": "hi"}), "No error: the build is green"
+        )
+
+    def test_openclaw_nonzero_is_unreachable_not_invoke_error(self):
+        self._patch_run((1, "", "boom"))
+        with self.assertRaises(antenna.Unreachable):
+            antenna.deliver(self._cfg(mode="openclaw"), {"content": "hi"})
+        try:
+            antenna.deliver(self._cfg(mode="openclaw"), {"content": "hi"})
+        except antenna.InvokeError:
+            self.fail("openclaw non-zero exit must be Unreachable, not InvokeError")
+        except antenna.Unreachable:
+            pass
+
+
+class TestInvokeErrorInLoop(FlightLogBase):
+    # item 5 — the loop logs `invoke error:` and the next heartbeat carries
+    # invoke_error:{n}.
+    class _Stop(Exception):
+        pass
+
+    def test_loop_logs_and_flags(self):
+        self.write_config({"client_version": "0.3.1"})
+        cfg = antenna.load_config()
+        logs = []
+        flags_seen = {"f": None}
+
+        orig = {
+            "log": antenna.log, "request": antenna.request, "run": antenna._run_invoke,
+            "hb": antenna.heartbeat, "sleep": antenna.time.sleep,
+            "every": antenna.HEARTBEAT_EVERY_TICKS,
+        }
+        antenna.HEARTBEAT_EVERY_TICKS = 1
+        antenna.log = lambda m: logs.append(m)
+
+        def fake_request(cfg, method, path, payload=None):
+            if path.startswith("/api/bee/poll"):
+                return antenna.HttpResult(200, {"items": [{
+                    "id": "1", "posted_at": "2026-11-07T00:00:00.000Z", "type": "chamber",
+                    "from": "x", "from_type": "bee", "content": "hi",
+                }]}, None, None)
+            return antenna.HttpResult(200, {}, None, None)
+
+        antenna.request = fake_request
+        antenna._run_invoke = lambda cfg, framed: (0, "", "")  # empty -> invoke error
+
+        def fake_hb(cfg, flags):
+            flags_seen["f"] = list(flags)
+            return {}
+
+        antenna.heartbeat = fake_hb
+
+        def fake_sleep(_s):
+            raise self._Stop()
+
+        antenna.time.sleep = fake_sleep
+        try:
+            with self.assertRaises(self._Stop):
+                antenna.run_loop(cfg)
+        finally:
+            antenna.log = orig["log"]
+            antenna.request = orig["request"]
+            antenna._run_invoke = orig["run"]
+            antenna.heartbeat = orig["hb"]
+            antenna.time.sleep = orig["sleep"]
+            antenna.HEARTBEAT_EVERY_TICKS = orig["every"]
+
+        self.assertTrue(any("invoke error:" in m for m in logs))
+        self.assertIn("invoke_error:1", flags_seen["f"])
+
+
+class TestLegacyConfig030(FlightLogBase):
+    class _Stop(Exception):
+        pass
+
+    def test_030_config_loads_and_loop_runs(self):
+        # A 0.3.0 hive.json: the fields 0.3.0 wrote, including the pairing state.
+        self.write_config({
+            "client_version": "0.3.0", "human_paired": True,
+            "human_paired_pending": False, "adoption_l1_pending": False,
+        })
+        cfg = antenna.load_config()
+        self.assertEqual(cfg["client_version"], "0.3.0")
+        self.assertTrue(cfg.get("human_paired"))
+
+        calls = {"n": 0}
+
+        def fake_request(cfg, method, path, payload=None):
+            calls["n"] += 1
+            return antenna.HttpResult(200, {"items": [], "cursor": int(cfg.get("cursor", 0))}, None, None)
+
+        orig_request = antenna.request
+        orig_sleep = antenna.time.sleep
+        antenna.request = fake_request
+
+        def fake_sleep(_seconds):
+            raise self._Stop()
+
+        antenna.time.sleep = fake_sleep
+        try:
+            with self.assertRaises(self._Stop):
+                antenna.run_loop(cfg)
+        finally:
+            antenna.request = orig_request
+            antenna.time.sleep = orig_sleep
+        self.assertGreaterEqual(calls["n"], 1)
 
 
 if __name__ == "__main__":
