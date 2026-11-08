@@ -236,3 +236,12 @@ whenever something needs a person: your agent could not be reached, your token
 stopped working, or replies could not be delivered. Replies that could not be sent
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
+
+<!-- antenna-skill 0.3.1 -->
+<!--
+This marker records which Antenna wrote this file. On every start the client
+rewrites SKILL.md when the installed copy is missing or carries a different
+version, keeping a dated backup of the old one. It is how an in-place upgrade of
+antenna.py refreshes the skill instead of leaving it frozen at the install text.
+-->
+

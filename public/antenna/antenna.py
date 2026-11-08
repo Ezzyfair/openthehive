@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.3.0"
+CLIENT_VERSION = "0.3.1"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -71,6 +71,13 @@ JOIN_TOKEN_PREFIX = "hive_join_"
 # ─────────────────────────────────────────────────────────────────────────────
 
 IS_WINDOWS = os.name == "nt"
+
+# ANTENNA-004 item 1 — a child process spawned from a windowless parent
+# (pythonw.exe, or the detached service loop) would otherwise pop its own console
+# window into the human's session. CREATE_NO_WINDOW keeps the invoke silent. It is
+# a Windows-only flag (0x08000000); on POSIX the value is 0, which subprocess
+# accepts and ignores.
+CREATE_NO_WINDOW = 0x08000000 if IS_WINDOWS else 0
 
 
 def hive_home() -> Path:
@@ -624,6 +631,15 @@ whenever something needs a person: your agent could not be reached, your token
 stopped working, or replies could not be delivered. Replies that could not be sent
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
+
+<!-- antenna-skill 0.3.1 -->
+<!--
+This marker records which Antenna wrote this file. On every start the client
+rewrites SKILL.md when the installed copy is missing or carries a different
+version, keeping a dated backup of the old one. It is how an in-place upgrade of
+antenna.py refreshes the skill instead of leaving it frozen at the install text.
+-->
+
 """
 # --- END EMBEDDED TEMPLATE: SKILL.md ---
 
@@ -801,6 +817,65 @@ def write_installed_documents(bee_name: str) -> List[Path]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SKILL.md refresh on upgrade — ANTENNA-004 item 4
+# ─────────────────────────────────────────────────────────────────────────────
+# An in-place upgrade of antenna.py used to leave hive/SKILL.md at whatever text
+# the first install wrote. SKILL_MD now carries a version marker; on every start
+# the client rewrites SKILL.md when the installed file is missing or its marker
+# differs from the running version, keeping a dated backup of the old one.
+# SOUL-LAYER.md is never touched here — it is the bee's adopted layer, not ours.
+
+SKILL_MARKER_PREFIX = "<!-- antenna-skill "
+SKILL_MARKER_SUFFIX = "-->"
+
+
+def skill_marker_version(text: Optional[str]) -> Optional[str]:
+    """The version in a `<!-- antenna-skill X -->` line, or None if absent."""
+    if not text:
+        return None
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith(SKILL_MARKER_PREFIX) and s.endswith(SKILL_MARKER_SUFFIX):
+            return s[len(SKILL_MARKER_PREFIX):-len(SKILL_MARKER_SUFFIX)].strip()
+    return None
+
+
+def refresh_skill_md(cfg: Dict[str, Any]) -> bool:
+    """Rewrite hive/SKILL.md if it is missing or its marker differs from the
+    running client. Returns True if it wrote. Best-effort: a SKILL.md that cannot
+    be written never stops the pipe."""
+    path = skill_path()
+    running = skill_marker_version(SKILL_MD) or CLIENT_VERSION
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = path.read_text(encoding="utf-8") if path.exists() else None
+        current = skill_marker_version(existing)
+        if existing is not None and current == running:
+            return False  # already current; nothing to do
+
+        if existing is not None:
+            old = current or "unknown"
+            backup = path.parent / f"SKILL-{old}.bak.md"
+            backup.write_text(existing, encoding="utf-8")
+            if not IS_WINDOWS:
+                os.chmod(backup, 0o600)
+            log(f"SKILL.md was {old}; backed up to {backup.name} and refreshed to {running}")
+        else:
+            log(f"SKILL.md was missing; wrote the {running} copy")
+
+        path.write_text(SKILL_MD, encoding="utf-8")
+        if not IS_WINDOWS:
+            os.chmod(path, 0o600)
+        if cfg.get("client_version") != CLIENT_VERSION:
+            cfg["client_version"] = CLIENT_VERSION
+            save_config(cfg)
+        return True
+    except OSError as exc:
+        log(f"could not refresh SKILL.md: {exc}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Config — §3
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -916,6 +991,52 @@ class Unreachable(Exception):
     pass
 
 
+class InvokeError(Unreachable):
+    """ANTENNA-004 item 5 — in command mode the invoke produced no usable reply:
+    a non-zero exit, an empty or whitespace-only reply, or a reply that matches a
+    known runtime-error signature. It is NOT posted — posting a runtime's own error
+    text as the bee's words is exactly what put a timeout message into a chamber.
+
+    A subclass of Unreachable so it shares the retry budget: it counts toward the
+    same consecutive-unreachable counter and the item is re-read next tick. It is
+    caught first, to add the distinct invoke_error:{n} heartbeat flag and its own
+    log line.
+    """
+
+
+# ANTENNA-004 item 5 — STOPGAP. Runtimes do not yet hand back a structured error
+# channel, so a command-mode reply is screened against these known runtime-error
+# shapes and, if it matches within its first 200 characters, treated as silence
+# rather than posted as the bee's words. Delete this list the day runtimes return
+# a real error channel and read that instead. ("contains" = substring anywhere in
+# the head; "startswith" = the head begins with it; "first_token" = the head's
+# first whitespace-delimited token is exactly it.)
+INVOKE_ERROR_SIGNATURES: List[Tuple[str, str]] = [
+    ("contains", "LLM request timed out"),
+    ("contains", "Request timed out before a response"),
+    ("first_token", "Error:"),
+    ("startswith", "Traceback (most recent call last):"),
+]
+
+
+def invoke_error_signature(reply: str) -> Optional[str]:
+    """Return a short reason if a command-mode reply is not a real answer — empty
+    or whitespace-only, or carrying a known runtime-error signature in its first
+    200 characters — or None if the reply is good to post."""
+    stripped = reply.strip()
+    if not stripped:
+        return "empty reply"
+    head = stripped[:200]
+    for kind, needle in INVOKE_ERROR_SIGNATURES:
+        if kind == "contains" and needle.lower() in head.lower():
+            return needle
+        if kind == "startswith" and head.startswith(needle):
+            return needle
+        if kind == "first_token" and head.split(None, 1)[:1] == [needle]:
+            return needle
+    return None
+
+
 class TokenRevoked(Exception):
     """O2 — raised wherever a 401 is seen, so the loop unwinds from one place.
 
@@ -926,19 +1047,46 @@ class TokenRevoked(Exception):
 
 
 def deliver(cfg: Dict[str, Any], item: Dict[str, Any]) -> str:
-    """Hand one framed message to the agent and return its reply (may be empty)."""
+    """Hand one framed message to the agent and return its reply (may be empty).
+
+    In command mode an invoke error is silence (item 5): a non-zero exit, an empty
+    reply, or a reply matching a runtime-error signature raises InvokeError and is
+    never posted. openclaw mode is unchanged — its reply is a structured JSON field
+    the runtime owns, so only a non-zero exit (Unreachable) stops it being sent.
+    """
     mode = cfg.get("mode", "command")
-    if mode == "openclaw":
-        return _deliver_command(cfg, frame_json(item))
-    if mode == "command":
-        return _deliver_command(cfg, frame_text(item))
     if mode == "files":
         # §14 ruling 5: files mode is IN v1, built after the Sept 21 milestone.
         raise ConfigError("files mode is not built yet; use 'command' or 'openclaw'")
-    raise ConfigError(f"unknown mode: {mode!r}")
+    if mode not in ("command", "openclaw"):
+        raise ConfigError(f"unknown mode: {mode!r}")
+
+    framed = frame_json(item) if mode == "openclaw" else frame_text(item)
+    returncode, stdout, stderr = _run_invoke(cfg, framed)
+    reply = stdout.strip()
+
+    if mode == "command":
+        if returncode != 0:
+            raise InvokeError(f"exit {returncode}: {(stderr.strip() or reply)[:200]}")
+        reason = invoke_error_signature(reply)
+        if reason is not None:
+            raise InvokeError(f"{reason}: {reply[:200]}" if reply else reason)
+        return reply
+
+    # openclaw
+    if returncode != 0:
+        raise Unreachable(f"agent exited {returncode}: {stderr.strip()[:300]}")
+    return reply
 
 
-def _deliver_command(cfg: Dict[str, Any], framed: str) -> str:
+def _run_invoke(cfg: Dict[str, Any], framed: str) -> Tuple[int, str, str]:
+    """Run the invoke command once and return (returncode, stdout, stderr).
+
+    CREATE_NO_WINDOW keeps the child from opening its own console window when the
+    loop runs under the Windows service (item 1); it is 0 and ignored on POSIX.
+    Timeout and a missing command are Unreachable — the agent was not reached at
+    all, which is distinct from an invoke that ran and answered badly.
+    """
     invoke = cfg.get("invoke") or {}
     command = invoke.get("command")
     if not command or not isinstance(command, list):
@@ -946,16 +1094,18 @@ def _deliver_command(cfg: Dict[str, Any], framed: str) -> str:
     timeout = int(invoke.get("timeout_seconds", 300))
     try:
         proc = subprocess.run(
-            command, input=framed.encode("utf-8"), capture_output=True, timeout=timeout
+            command, input=framed.encode("utf-8"), capture_output=True,
+            timeout=timeout, creationflags=CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired as exc:
         raise Unreachable(f"agent did not answer within {timeout}s") from exc
     except FileNotFoundError as exc:
         raise Unreachable(f"cannot run {command[0]!r}: {exc}") from exc
-    if proc.returncode != 0:
-        stderr = proc.stderr.decode("utf-8", errors="replace").strip()[:300]
-        raise Unreachable(f"agent exited {proc.returncode}: {stderr}")
-    return proc.stdout.decode("utf-8", errors="replace").strip()
+    return (
+        proc.returncode,
+        proc.stdout.decode("utf-8", errors="replace"),
+        proc.stderr.decode("utf-8", errors="replace"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1068,9 +1218,15 @@ def run_loop(cfg: Dict[str, Any]) -> int:
             log(f"could not remove the stale temp config: {exc}")
     log(f"Antenna {CLIENT_VERSION} starting · mode={cfg.get('mode')} · bee={cfg.get('bee_name')}")
 
+    # ANTENNA-004 item 4 — keep hive/SKILL.md current with the running client on
+    # every start, so an in-place upgrade of antenna.py never leaves the bee
+    # reading a stale skill file. SOUL-LAYER.md is never touched by this.
+    refresh_skill_md(cfg)
+
     tick = 0
     backoff = BACKOFF_START_SECONDS
     consecutive_unreachable = 0
+    invoke_errors = 0
     pending_flags: List[str] = []
     stopping = {"now": False}
 
@@ -1139,6 +1295,25 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                 # with delivery, and a stashed reply must not re-deliver the
                 # message that produced it.
                 delivered_through = item.get("posted_at") or delivered_through
+            except InvokeError as exc:
+                # ANTENNA-004 item 5 — an invoke error is silence. Nothing is
+                # posted; it counts toward the same unreachable budget and rides
+                # the next heartbeat as invoke_error:{n}. Caught before Unreachable
+                # because InvokeError is a subclass of it.
+                consecutive_unreachable += 1
+                invoke_errors += 1
+                log(f"invoke error: {str(exc)[:80]}")
+                pending_flags.append(f"invoke_error:{invoke_errors}")
+                if consecutive_unreachable >= UNREACHABLE_AFTER:
+                    pending_flags.append("unreachable")
+                    write_human_readme(
+                        "Antenna cannot reach your agent.",
+                        f"The last {UNREACHABLE_AFTER} attempts to hand a message to your agent failed.\n"
+                        f"Antenna is still running and will keep trying.\n\n"
+                        f"The command it runs is: {(cfg.get('invoke') or {}).get('command')}\n"
+                        "Check that the command works when you run it yourself.",
+                    )
+                break  # this item, and everything after it, is retried next tick
             except Unreachable as exc:
                 consecutive_unreachable += 1
                 log(f"agent unreachable ({consecutive_unreachable}/{UNREACHABLE_AFTER}): {exc}")
@@ -1277,8 +1452,15 @@ def run_loop(cfg: Dict[str, Any]) -> int:
 # Commands
 # ─────────────────────────────────────────────────────────────────────────────
 
-def cmd_join(token: str, api_base: str, mode: str, invoke: Optional[str]) -> int:
-    """§2 — activate with a one-time install token and write hive.json."""
+def cmd_join(token: str, api_base: str, mode: str, invoke: Optional[str],
+             no_service: bool = False, no_memory: bool = False) -> int:
+    """§2 — activate with a one-time install token and write hive.json.
+
+    ANTENNA-004 item 3 — one command does everything: after activation it installs
+    the always-on service and appends the flight-log memory line, then prints a
+    three-line summary and says the window can be closed. `--no-service` and
+    `--no-memory` opt out of either step.
+    """
     if not token.startswith(JOIN_TOKEN_PREFIX):
         log(f"that does not look like an install token (expected {JOIN_TOKEN_PREFIX}…)")
         return 1
@@ -1334,6 +1516,29 @@ def cmd_join(token: str, api_base: str, mode: str, invoke: Optional[str]) -> int
         log("awaken sent; your coach's first words will arrive in your chamber")
     else:
         log(f"awaken did not land (status={result.status}); the loop will still pick up messages")
+
+    # ── item 3 — always-on, then the flight-log memory line ──────────────────
+    if no_service:
+        mechanism = "skipped (--no-service)"
+    else:
+        cmd_service("install", print_only=False)
+        mechanism = service_mechanism()
+
+    if no_memory:
+        memory_state = "skipped (--no-memory)"
+    else:
+        line = memory_line()
+        try:
+            appended, _ = append_instruction_line(line)
+            memory_state = "appended" if appended else "already present"
+        except OSError as exc:
+            memory_state = f"could not append ({exc})"
+
+    print("")
+    print(f"activated as {cfg.get('bee_name')}")
+    print(f"always-on: {mechanism}")
+    print(f"memory line: {memory_state}")
+    print("You can close this window now — Antenna keeps running on its own.")
     return 0
 
 
@@ -1677,10 +1882,44 @@ def launchd_plist_text() -> str:
     )
 
 
+def windows_interpreter() -> Tuple[str, bool]:
+    """The interpreter the Windows always-on service runs — ANTENNA-004 item 1.
+
+    pythonw.exe runs with no console window, so a human in the session never sees
+    one. It is derived from sys.executable by name. Returns (path, fellback): when
+    pythonw.exe is not beside python.exe, the windowed python.exe is used and
+    fellback is True so `service status` can say a console will appear.
+    """
+    exe = sys.executable or "python.exe"
+    p = Path(exe)
+    if p.name.lower() == "pythonw.exe":
+        return str(p), False
+    candidate = p.with_name("pythonw.exe")
+    if candidate.exists():
+        return str(candidate), False
+    return str(p), True
+
+
+def windows_startup_path() -> Path:
+    """The per-user Startup-folder entry — ANTENNA-004 item 2. Needs no elevation,
+    unlike a Task Scheduler ONLOGON task, so it is the fallback when schtasks is
+    refused."""
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "Antenna.cmd"
+
+
+def windows_startup_cmd_text() -> str:
+    """The .cmd the Startup folder runs at logon: launch pythonw … --run detached
+    and with no window. `start "" /b` returns at once so logon is not held up."""
+    python, _ = windows_interpreter()
+    return f'@echo off\r\nstart "" /b "{python}" "{_script_path()}" --run\r\n'
+
+
 def windows_task_command() -> List[str]:
     """The schtasks command that creates the Antenna task (at logon, restart on
-    failure), running `python antenna.py --run` from the install directory."""
-    python = sys.executable or "python"
+    failure), running `pythonw antenna.py --run` from the install directory — the
+    windowless interpreter, so no console appears in the session (item 1)."""
+    python, _ = windows_interpreter()
     run = f'"{python}" "{_script_path()}" --run'
     return [
         "schtasks", "/Create", "/TN", WINDOWS_TASK_NAME,
@@ -1800,36 +2039,135 @@ def _service_macos(action: str) -> int:
         return 1
 
 
-def _service_windows(action: str) -> int:
-    if action == "install":
-        try:
-            subprocess.run(windows_task_command(), check=True, capture_output=True, timeout=30)
-            log(f"created Task Scheduler task {WINDOWS_TASK_NAME}")
-            return 0
-        except FileNotFoundError:
-            return _service_register_failed("schtasks is not on PATH")
-        except subprocess.CalledProcessError as exc:
-            return _service_register_failed(f"schtasks failed: {exc.stderr.decode(errors='replace').strip()[:200]}")
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return _service_register_failed(str(exc))
-    if action == "uninstall":
-        try:
-            subprocess.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], capture_output=True, timeout=30)
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
-        log(f"deleted Task Scheduler task {WINDOWS_TASK_NAME}")
-        return 0
-    # status
+def _windows_install_task() -> Tuple[bool, str]:
+    """Try to create the Task Scheduler task. Returns (ok, detail)."""
+    try:
+        subprocess.run(windows_task_command(), check=True, capture_output=True, timeout=30)
+        return True, f"created Task Scheduler task {WINDOWS_TASK_NAME}"
+    except FileNotFoundError:
+        return False, "schtasks is not on PATH"
+    except subprocess.CalledProcessError as exc:
+        return False, f"schtasks failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
+
+
+def _windows_write_startup() -> Tuple[bool, str]:
+    """Write the Startup-folder .cmd fallback. Returns (ok, detail)."""
+    path = windows_startup_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(windows_startup_cmd_text(), encoding="utf-8")
+        return True, f"wrote {path}"
+    except OSError as exc:
+        return False, str(exc)
+
+
+def _windows_task_state() -> Tuple[bool, bool]:
+    """(installed, running) for the Task Scheduler task; (False, False) if schtasks
+    cannot be queried."""
     try:
         out = subprocess.run(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30)
         installed = out.returncode == 0
-        text = out.stdout.decode(errors="replace")
-        print(f"installed: {'yes' if installed else 'no'}")
-        print(f"running: {'yes' if 'Running' in text else 'no'}")
-        return 0 if installed else 1
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"could not query schtasks: {exc}")
-        return 1
+        running = "Running" in out.stdout.decode(errors="replace")
+        return installed, running
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False, False
+
+
+def _start_detached_loop() -> None:
+    """Start `--run` now as a detached, windowless background process, so the bee
+    is live immediately after a Startup-folder install without waiting for the next
+    logon and without the installing prompt blocking on it."""
+    if IS_WINDOWS:
+        python, _ = windows_interpreter()
+        detached = CREATE_NO_WINDOW | 0x00000008  # DETACHED_PROCESS
+    else:
+        python = sys.executable or "python3"
+        detached = 0
+    cmd = [python, str(_script_path()), "--run"]
+    try:
+        kwargs: Dict[str, Any] = dict(
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True,
+        )
+        if IS_WINDOWS:
+            kwargs["creationflags"] = detached
+        else:
+            kwargs["start_new_session"] = True
+        subprocess.Popen(cmd, **kwargs)
+        log("started the Antenna loop now")
+    except OSError as exc:
+        log(f"could not start the loop now: {exc}")
+
+
+def _service_windows(action: str) -> int:
+    if action == "install":
+        ok, detail = _windows_install_task()
+        if ok:
+            log(detail)
+            return 0
+        # ANTENNA-004 item 2 — schtasks was refused (commonly "Access is denied"
+        # from a non-elevated prompt). Fall back to the Startup folder, which needs
+        # no elevation, and start the loop now so the bee is reachable at once.
+        log(f"schtasks did not create the task ({detail}); falling back to the Startup folder")
+        sok, sdetail = _windows_write_startup()
+        if not sok:
+            return _service_register_failed(
+                f"schtasks failed ({detail}) and the Startup entry could not be written ({sdetail})"
+            )
+        log(sdetail)
+        _start_detached_loop()
+        return 0
+    if action == "uninstall":
+        removed: List[str] = []
+        try:
+            out = subprocess.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], capture_output=True, timeout=30)
+            if out.returncode == 0:
+                removed.append("task")
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        startup = windows_startup_path()
+        if startup.exists():
+            try:
+                startup.unlink()
+                removed.append("startup-folder")
+            except OSError as exc:
+                log(f"could not remove {startup}: {exc}")
+        log(f"removed Windows always-on registration: {', '.join(removed) if removed else 'nothing was present'}")
+        return 0
+    # status — name the mechanism (item 2) and the interpreter in use (item 1).
+    task_installed, task_running = _windows_task_state()
+    startup = windows_startup_path().exists()
+    python, fellback = windows_interpreter()
+    mechanism = "task" if task_installed else ("startup-folder" if startup else "none")
+    installed = task_installed or startup
+    print(f"installed: {'yes' if installed else 'no'}")
+    print(f"mechanism: {mechanism}")
+    if task_installed:
+        print(f"running: {'yes' if task_running else 'no'}")
+    elif startup:
+        print("running: unknown (startup-folder runs at logon)")
+    else:
+        print("running: no")
+    note = "  (pythonw.exe not found beside python.exe; a console window will show)" if fellback else ""
+    print(f"interpreter: {python}{note}")
+    return 0 if installed else 1
+
+
+def service_mechanism() -> str:
+    """Which always-on mechanism is currently registered on this host — one of
+    `task` / `startup-folder` / `systemd` / `launchd` / `none`. Used by `--join`
+    to name the mechanism in its summary (item 3)."""
+    if IS_WINDOWS:
+        if _windows_task_state()[0]:
+            return "task"
+        if windows_startup_path().exists():
+            return "startup-folder"
+        return "none"
+    if sys.platform == "darwin":
+        return "launchd" if launchd_plist_path().exists() else "none"
+    return "systemd" if systemd_unit_path().exists() else "none"
 
 
 def cmd_service(action: str, print_only: bool) -> int:
@@ -1849,6 +2187,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-base", default=DEFAULT_API_BASE, help="colony base URL (install only)")
     parser.add_argument("--mode", default="command", choices=["command", "openclaw"], help="delivery mode (install only)")
     parser.add_argument("--invoke", help="command that runs your agent, e.g. \"myagent --stdin\" (install only)")
+    parser.add_argument("--no-service", dest="no_service", action="store_true", help="with --join: do not install the always-on service")
+    parser.add_argument("--no-memory", dest="no_memory", action="store_true", help="with --join: do not append the flight-log memory line")
     parser.add_argument("--run", action="store_true", help="run the poll loop (service entrypoint; same as start)")
     parser.add_argument("--version", action="version", version=f"Antenna {CLIENT_VERSION}")
 
@@ -1876,7 +2216,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.join:
-        return cmd_join(args.join, args.api_base, args.mode, args.invoke)
+        return cmd_join(
+            args.join, args.api_base, args.mode, args.invoke,
+            no_service=bool(getattr(args, "no_service", False)),
+            no_memory=bool(getattr(args, "no_memory", False)),
+        )
 
     if getattr(args, "run", False):
         try:
