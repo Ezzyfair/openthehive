@@ -237,7 +237,7 @@ stopped working, or replies could not be delivered. Replies that could not be se
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
 
-<!-- antenna-skill 0.3.1 -->
+<!-- antenna-skill 0.3.2 -->
 <!--
 This marker records which Antenna wrote this file. On every start the client
 rewrites SKILL.md when the installed copy is missing or carries a different
