@@ -49,7 +49,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.3.1"
+CLIENT_VERSION = "0.3.2"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -146,6 +146,20 @@ def layer_path() -> Path:
 
 def flight_log_path() -> Path:
     return hive_home() / "hive" / "FLIGHT-LOG.md"
+
+
+def pid_path() -> Path:
+    """ANTENNA-005 item 1 — the `--run` process records its OWN pid here at start
+    and removes it on a clean exit. `service status` reads it and confirms a live
+    process with that pid whose command line names antenna.py; a pid with no such
+    process is a stale file, reported and removed. Beside hive.json, never a secret."""
+    return hive_home() / "antenna.pid"
+
+
+def windows_task_xml_path() -> Path:
+    """ANTENNA-005 item 3 — the Task Scheduler XML, written beside hive.json and
+    left for inspection. Carries paths and the current username only; no secret."""
+    return hive_home() / "antenna-task.xml"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -632,7 +646,7 @@ stopped working, or replies could not be delivered. Replies that could not be se
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
 
-<!-- antenna-skill 0.3.1 -->
+<!-- antenna-skill 0.3.2 -->
 <!--
 This marker records which Antenna wrote this file. On every start the client
 rewrites SKILL.md when the installed copy is missing or carries a different
@@ -1223,6 +1237,12 @@ def run_loop(cfg: Dict[str, Any]) -> int:
     # reading a stale skill file. SOUL-LAYER.md is never touched by this.
     refresh_skill_md(cfg)
 
+    # ANTENNA-005 item 1 — this process records its own pid so `service status`
+    # can confirm the loop is alive by inspection, not from the installer's record.
+    # A clean exit removes it (see _remove_pid at each return below); a crash leaves
+    # it, and status reports that stale file and clears it.
+    _write_pid()
+
     tick = 0
     backoff = BACKOFF_START_SECONDS
     consecutive_unreachable = 0
@@ -1248,6 +1268,7 @@ def run_loop(cfg: Dict[str, Any]) -> int:
 
         if result.status == 401:
             _stop_revoked("polling")
+            _remove_pid()
             return 2
 
         if result.status == 429 and result.retry_after is not None:
@@ -1329,6 +1350,7 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                 break  # this item, and everything after it, is retried next tick
             except ConfigError as exc:
                 log(f"cannot deliver: {exc}")
+                _remove_pid()
                 return 1
 
             # Flight memory (ruling 1): the bee owns this record. Written here,
@@ -1349,6 +1371,7 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                             cfg["cursor"] = partial
                             save_config(cfg)
                     _stop_revoked("posting a reply")
+                    _remove_pid()
                     return 2
             else:
                 log(f"no reply for {item.get('id')} (silence is allowed)")
@@ -1445,6 +1468,7 @@ def run_loop(cfg: Dict[str, Any]) -> int:
         time.sleep(int(cfg.get("poll_seconds", 60)))
 
     log("Antenna stopped.")
+    _remove_pid()
     return 0
 
 
@@ -1825,6 +1849,169 @@ LAUNCHD_LABEL = "ai.openthehive.antenna"
 WINDOWS_TASK_NAME = "Antenna"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTENNA-005 — the loop reports itself, and install/uninstall own the loop.
+# ─────────────────────────────────────────────────────────────────────────────
+# Status reads the world, not the installer's record: the running loop writes its
+# own pid, and status confirms a live process with that pid whose command line
+# names antenna.py. install and uninstall share stop_loops(), which finds every
+# live `antenna.py --run` (never the current process), ends it, and waits until
+# none remain — so uninstall never leaves the old loop behind and install never
+# leaves two serving one bee.
+
+def _write_pid() -> None:
+    try:
+        pid_path().parent.mkdir(parents=True, exist_ok=True)
+        pid_path().write_text(f"{os.getpid()}\n", encoding="utf-8")
+    except OSError as exc:
+        log(f"could not write {pid_path()}: {exc}")
+
+
+def _remove_pid() -> None:
+    try:
+        pid_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def read_pid() -> Optional[int]:
+    """The pid recorded by the running loop, or None if there is no readable pid."""
+    try:
+        text = pid_path().read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+    try:
+        return int(text) if text else None
+    except ValueError:
+        return None
+
+
+def _process_cmdline(pid: int) -> Optional[str]:
+    """The command line of the live process with this pid, or None if there is no
+    such process. Windows: Win32_Process via PowerShell. POSIX: /proc first, then
+    `ps -p`."""
+    if IS_WINDOWS:
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f'(Get-CimInstance Win32_Process -Filter "ProcessId = {int(pid)}").CommandLine'],
+                capture_output=True, timeout=30, creationflags=CREATE_NO_WINDOW,
+            )
+            if out.returncode != 0:
+                return None
+            line = out.stdout.decode(errors="replace").strip()
+            return line or None
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            return None
+    proc = Path(f"/proc/{int(pid)}/cmdline")
+    try:
+        if proc.exists():
+            raw = proc.read_bytes()
+            return raw.replace(b"\x00", b" ").decode(errors="replace").strip() or None
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["ps", "-p", str(int(pid)), "-o", "args="], capture_output=True, timeout=30)
+        if out.returncode != 0:
+            return None
+        line = out.stdout.decode(errors="replace").strip()
+        return line or None
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def running_state() -> Tuple[str, Optional[int]]:
+    """('yes', pid) when the recorded pid names a live antenna.py process; ('stale',
+    None) when the pid file points at no such process (and the file is removed here);
+    ('no', None) when there is no pid file."""
+    pid = read_pid()
+    if pid is None:
+        return "no", None
+    cmdline = _process_cmdline(pid)
+    if cmdline and "antenna.py" in cmdline:
+        return "yes", pid
+    _remove_pid()
+    return "stale", None
+
+
+def _live_run_processes() -> List[int]:
+    """Pids of every live process whose command line contains both `antenna.py` and
+    `--run`, excluding the current process. Windows: Win32_Process via PowerShell;
+    POSIX: `ps -eo pid,args`."""
+    me = os.getpid()
+    pids: List[int] = []
+    if IS_WINDOWS:
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process | Where-Object CommandLine -like "
+                 "'*antenna.py*--run*' | Select-Object -ExpandProperty ProcessId"],
+                capture_output=True, timeout=30, creationflags=CREATE_NO_WINDOW,
+            )
+            if out.returncode == 0:
+                for line in out.stdout.decode(errors="replace").splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        pids.append(int(line))
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+    else:
+        try:
+            out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, timeout=30)
+            if out.returncode == 0:
+                for line in out.stdout.decode(errors="replace").splitlines():
+                    parts = line.strip().split(None, 1)
+                    if len(parts) != 2 or not parts[0].isdigit():
+                        continue
+                    pid_s, args = parts
+                    if "antenna.py" in args and "--run" in args:
+                        pids.append(int(pid_s))
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+    return [p for p in pids if p != me]
+
+
+def _kill(pid: int) -> None:
+    if IS_WINDOWS:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=30,
+                           creationflags=CREATE_NO_WINDOW)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def stop_loops() -> int:
+    """Stop every live `antenna.py --run` process (never this one) and wait until
+    none remain, up to 10 s. POSIX escalates to SIGKILL after 5 s. Returns how many
+    processes were found to begin with — the number uninstall and install report."""
+    initial = _live_run_processes()
+    count = len(initial)
+    if count == 0:
+        return 0
+    for pid in initial:
+        _kill(pid)
+    deadline = time.time() + 10
+    escalated = False
+    while time.time() < deadline:
+        remaining = _live_run_processes()
+        if not remaining:
+            break
+        if not IS_WINDOWS and not escalated and time.time() >= deadline - 5:
+            for pid in remaining:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+            escalated = True
+        time.sleep(0.2)
+    return count
+
+
 def _script_path() -> Path:
     return Path(__file__).resolve()
 
@@ -1916,9 +2103,9 @@ def windows_startup_cmd_text() -> str:
 
 
 def windows_task_command() -> List[str]:
-    """The schtasks command that creates the Antenna task (at logon, restart on
-    failure), running `pythonw antenna.py --run` from the install directory — the
-    windowless interpreter, so no console appears in the session (item 1)."""
+    """The flag-based schtasks command 0.3.1 used. Kept for `service --print`; the
+    installer now creates the task from XML (windows_task_xml_text) so the settings
+    travel with it (ANTENNA-005 item 3)."""
     python, _ = windows_interpreter()
     run = f'"{python}" "{_script_path()}" --run'
     return [
@@ -1928,6 +2115,112 @@ def windows_task_command() -> List[str]:
         "/RL", "LIMITED",
         "/F",
     ]
+
+
+def windows_task_xml_text(always: bool = False) -> str:
+    """ANTENNA-005 item 3 — the Task Scheduler definition, as XML so the settings
+    schtasks' flags dropped travel with the task: no execution time limit (PT0S),
+    runs on battery and keeps running on battery, starts when available, restarts
+    three times on failure, ignores a second instance, hidden, and runs pythonw.exe
+    so no console appears. A LogonTrigger for the current user. With `always` the
+    principal's LogonType is Password, which makes schtasks itself prompt for the
+    Windows password once (item 4); Antenna never reads or stores it. The file
+    carries paths and a username only — no secret."""
+    python, _ = windows_interpreter()
+    script = str(_script_path())
+    workdir = str(_install_dir())
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    logon_type = "Password" if always else "InteractiveToken"
+    return (
+        '<?xml version="1.0" encoding="UTF-16"?>\r\n'
+        '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\r\n'
+        "  <RegistrationInfo>\r\n"
+        "    <Description>Antenna — The Hive bee client</Description>\r\n"
+        "  </RegistrationInfo>\r\n"
+        "  <Triggers>\r\n"
+        "    <LogonTrigger>\r\n"
+        "      <Enabled>true</Enabled>\r\n"
+        f"      <UserId>{user}</UserId>\r\n"
+        "    </LogonTrigger>\r\n"
+        "  </Triggers>\r\n"
+        '  <Principals>\r\n'
+        '    <Principal id="Author">\r\n'
+        f"      <UserId>{user}</UserId>\r\n"
+        f"      <LogonType>{logon_type}</LogonType>\r\n"
+        "      <RunLevel>LeastPrivilege</RunLevel>\r\n"
+        "    </Principal>\r\n"
+        "  </Principals>\r\n"
+        "  <Settings>\r\n"
+        "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\r\n"
+        "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\r\n"
+        "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\r\n"
+        "    <AllowHardTerminate>true</AllowHardTerminate>\r\n"
+        "    <StartWhenAvailable>true</StartWhenAvailable>\r\n"
+        "    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\r\n"
+        "    <IdleSettings>\r\n"
+        "      <StopOnIdleEnd>false</StopOnIdleEnd>\r\n"
+        "      <RestartOnIdle>false</RestartOnIdle>\r\n"
+        "    </IdleSettings>\r\n"
+        "    <AllowStartOnDemand>true</AllowStartOnDemand>\r\n"
+        "    <Enabled>true</Enabled>\r\n"
+        "    <Hidden>true</Hidden>\r\n"
+        "    <RunOnlyIfIdle>false</RunOnlyIfIdle>\r\n"
+        "    <WakeToRun>false</WakeToRun>\r\n"
+        "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\r\n"
+        "    <Priority>7</Priority>\r\n"
+        "    <RestartOnFailure>\r\n"
+        "      <Interval>PT1M</Interval>\r\n"
+        "      <Count>3</Count>\r\n"
+        "    </RestartOnFailure>\r\n"
+        "  </Settings>\r\n"
+        '  <Actions Context="Author">\r\n'
+        "    <Exec>\r\n"
+        f"      <Command>{python}</Command>\r\n"
+        f'      <Arguments>"{script}" --run</Arguments>\r\n'
+        f"      <WorkingDirectory>{workdir}</WorkingDirectory>\r\n"
+        "    </Exec>\r\n"
+        "  </Actions>\r\n"
+        "</Task>\r\n"
+    )
+
+
+def _task_present() -> bool:
+    """True when `schtasks /Query /TN Antenna` exits 0 (ANTENNA-005 item 1). False
+    when schtasks is absent or fails — which is the POSIX case, so this is safe to
+    call on any host."""
+    try:
+        out = subprocess.run(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30)
+        return out.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _task_is_always() -> bool:
+    """True when the Antenna task runs with a Password logon (installed with
+    --always), read back from its own XML."""
+    try:
+        out = subprocess.run(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME, "/XML"], capture_output=True, timeout=30)
+        if out.returncode != 0:
+            return False
+        return "<LogonType>Password</LogonType>" in out.stdout.decode(errors="replace")
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _present_mechanisms() -> List[str]:
+    """Every always-on mechanism that actually exists on this host, by inspection,
+    in the ticket's order: task, startup-folder, systemd, launchd (ANTENNA-005
+    item 1). The task label is `task (always)` when it carries a Password logon."""
+    present: List[str] = []
+    if _task_present():
+        present.append("task (always)" if _task_is_always() else "task")
+    if windows_startup_path().exists():
+        present.append("startup-folder")
+    if systemd_unit_path().exists():
+        present.append("systemd")
+    if launchd_plist_path().exists():
+        present.append("launchd")
+    return present
 
 
 def systemd_unit_path() -> Path:
@@ -1967,15 +2260,58 @@ def _service_register_failed(detail: str) -> int:
     return 1
 
 
-def _service_linux(action: str) -> int:
+def _service_status() -> int:
+    """ANTENNA-005 item 1 — status from the world, not the installer's record. The
+    mechanism is whatever actually exists, by inspection; `running` comes from the
+    pid the loop wrote for itself, confirmed against a live process."""
+    present = _present_mechanisms()
+    if not present:
+        print("installed: no")
+        print("mechanism: none")
+    else:
+        print("installed: yes")
+        print(f"mechanism: {', '.join(present)}")
+        if len(present) > 1:
+            print("warning: two mechanisms installed; run service install to leave one")
+    state, pid = running_state()
+    if state == "yes":
+        print("running: yes")
+        print(f"pid: {pid}")
+    elif state == "stale":
+        print("running: no (stale pid file removed)")
+    else:
+        print("running: no")
+    return 0 if present else 1
+
+
+def _service_linux(action: str, always: bool = False) -> int:
     unit = systemd_unit_path()
     if action == "install":
+        stopped = stop_loops()
+        # Remove any existing registration before installing, so one install leaves
+        # exactly one mechanism (ANTENNA-005 item 2).
+        try:
+            subprocess.run(["systemctl", "--user", "disable", "--now", "antenna.service"], capture_output=True, timeout=30)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        unit.unlink(missing_ok=True)
         try:
             unit.parent.mkdir(parents=True, exist_ok=True)
             unit.write_text(systemd_unit_text(), encoding="utf-8")
             subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
             subprocess.run(["systemctl", "--user", "enable", "--now", "antenna.service"], check=True, capture_output=True, timeout=30)
             log(f"installed and started {unit}")
+            if always:
+                # ANTENNA-005 item 4 — lingering lets the user service run before
+                # the user logs in. Attempted once; the result is only logged.
+                user = os.environ.get("USER") or ""
+                try:
+                    subprocess.run(["loginctl", "enable-linger", user], capture_output=True, timeout=30)
+                    log(f"requested lingering for {user or 'this user'} (loginctl enable-linger)")
+                except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+                    log(f"could not enable lingering: {exc}")
+            print(f"stopped: {stopped} process(es)")
+            print("installed: systemd")
             return 0
         except FileNotFoundError:
             return _service_register_failed("systemctl is not on PATH (no systemd --user session here)")
@@ -1984,34 +2320,50 @@ def _service_linux(action: str) -> int:
         except (OSError, subprocess.TimeoutExpired) as exc:
             return _service_register_failed(str(exc))
     if action == "uninstall":
+        stopped = stop_loops()
+        removed: List[str] = []
         try:
             subprocess.run(["systemctl", "--user", "disable", "--now", "antenna.service"], capture_output=True, timeout=30)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
-        unit.unlink(missing_ok=True)
+        if unit.exists():
+            unit.unlink(missing_ok=True)
+            removed.append("systemd")
         log(f"removed {unit}")
+        print(f"stopped: {stopped} process(es)")
+        print(f"removed: {', '.join(removed) if removed else 'nothing'}")
         return 0
-    # status
-    try:
-        enabled = subprocess.run(["systemctl", "--user", "is-enabled", "antenna.service"], capture_output=True, timeout=30)
-        active = subprocess.run(["systemctl", "--user", "is-active", "antenna.service"], capture_output=True, timeout=30)
-        print(f"installed: {enabled.stdout.decode(errors='replace').strip() or 'no'}")
-        print(f"running: {active.stdout.decode(errors='replace').strip() or 'no'}")
-        return 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"could not query systemd: {exc}")
-        return 1
+    return _service_status()
 
 
-def _service_macos(action: str) -> int:
+def _service_macos(action: str, always: bool = False) -> int:
     plist = launchd_plist_path()
     if action == "install":
+        stopped = stop_loops()
+        try:
+            subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, timeout=30)
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+        plist.unlink(missing_ok=True)
         try:
             plist.parent.mkdir(parents=True, exist_ok=True)
             plist.write_text(launchd_plist_text(), encoding="utf-8")
-            subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, timeout=30)
             subprocess.run(["launchctl", "load", str(plist)], check=True, capture_output=True, timeout=30)
             log(f"installed and loaded {plist}")
+            if always:
+                # ANTENNA-005 item 4 — a launchd user agent cannot run before login
+                # without a LaunchDaemon, which is out of scope; say so plainly.
+                log("always-on before login needs a LaunchDaemon on macOS, which is out of scope; "
+                    "installed the user agent instead")
+                write_human_readme(
+                    "Antenna is installed as a launchd user agent.",
+                    "On macOS a user agent runs whenever you are logged in. Running Antenna\n"
+                    "before anyone logs in would need a LaunchDaemon (a system-level job that\n"
+                    "asks for an administrator), which this installer does not create.\n\n"
+                    "Antenna starts as soon as you log in and keeps running while you are.",
+                )
+            print(f"stopped: {stopped} process(es)")
+            print("installed: launchd")
             return 0
         except FileNotFoundError:
             return _service_register_failed("launchctl is not on PATH")
@@ -2020,34 +2372,44 @@ def _service_macos(action: str) -> int:
         except (OSError, subprocess.TimeoutExpired) as exc:
             return _service_register_failed(str(exc))
     if action == "uninstall":
+        stopped = stop_loops()
+        removed = []
         try:
             subprocess.run(["launchctl", "unload", str(plist)], capture_output=True, timeout=30)
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             pass
-        plist.unlink(missing_ok=True)
+        if plist.exists():
+            plist.unlink(missing_ok=True)
+            removed.append("launchd")
         log(f"removed {plist}")
+        print(f"stopped: {stopped} process(es)")
+        print(f"removed: {', '.join(removed) if removed else 'nothing'}")
         return 0
-    # status
-    try:
-        out = subprocess.run(["launchctl", "list"], capture_output=True, timeout=30)
-        listed = LAUNCHD_LABEL in out.stdout.decode(errors="replace")
-        print(f"installed: {'yes' if plist.exists() else 'no'}")
-        print(f"running: {'yes' if listed else 'no'}")
-        return 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
-        print(f"could not query launchd: {exc}")
-        return 1
+    return _service_status()
 
 
-def _windows_install_task() -> Tuple[bool, str]:
-    """Try to create the Task Scheduler task. Returns (ok, detail)."""
+def _windows_install_task(always: bool = False) -> Tuple[bool, str]:
+    """ANTENNA-005 item 3/4 — create the task from XML so its settings travel with
+    it. With `always`, schtasks itself prompts for the Windows password once
+    (/RP *); Antenna never reads or stores it. Returns (ok, detail)."""
+    xml_path = windows_task_xml_path()
     try:
-        subprocess.run(windows_task_command(), check=True, capture_output=True, timeout=30)
-        return True, f"created Task Scheduler task {WINDOWS_TASK_NAME}"
+        xml_path.parent.mkdir(parents=True, exist_ok=True)
+        xml_path.write_text(windows_task_xml_text(always=always), encoding="utf-8")
+    except OSError as exc:
+        return False, f"could not write task XML: {exc}"
+    cmd = ["schtasks", "/Create", "/TN", WINDOWS_TASK_NAME, "/XML", str(xml_path), "/F"]
+    if always:
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+        cmd += ["/RU", user, "/RP", "*"]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        label = "task (always)" if always else "task"
+        return True, f"created Task Scheduler task {WINDOWS_TASK_NAME} from XML ({label})"
     except FileNotFoundError:
         return False, "schtasks is not on PATH"
     except subprocess.CalledProcessError as exc:
-        return False, f"schtasks failed: {exc.stderr.decode(errors='replace').strip()[:200]}"
+        return False, f"schtasks /XML refused: {exc.stderr.decode(errors='replace').strip()[:200]}"
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
 
@@ -2063,16 +2425,31 @@ def _windows_write_startup() -> Tuple[bool, str]:
         return False, str(exc)
 
 
-def _windows_task_state() -> Tuple[bool, bool]:
-    """(installed, running) for the Task Scheduler task; (False, False) if schtasks
-    cannot be queried."""
+def _windows_remove_mechanisms() -> List[str]:
+    """Remove every Windows always-on mechanism present — the task (ending it first)
+    and the Startup entry — and return the list of what was removed (ANTENNA-005
+    item 2)."""
+    removed: List[str] = []
+    # schtasks /End first when a task exists, so a running instance is stopped
+    # before the registration is deleted.
     try:
-        out = subprocess.run(["schtasks", "/Query", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30)
-        installed = out.returncode == 0
-        running = "Running" in out.stdout.decode(errors="replace")
-        return installed, running
+        subprocess.run(["schtasks", "/End", "/TN", WINDOWS_TASK_NAME], capture_output=True, timeout=30)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return False, False
+        pass
+    try:
+        out = subprocess.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], capture_output=True, timeout=30)
+        if out.returncode == 0:
+            removed.append("task")
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    startup = windows_startup_path()
+    if startup.exists():
+        try:
+            startup.unlink()
+            removed.append("startup-folder")
+        except OSError as exc:
+            log(f"could not remove {startup}: {exc}")
+    return removed
 
 
 def _start_detached_loop() -> None:
@@ -2101,15 +2478,36 @@ def _start_detached_loop() -> None:
         log(f"could not start the loop now: {exc}")
 
 
-def _service_windows(action: str) -> int:
+def _service_windows(action: str, always: bool = False) -> int:
     if action == "install":
-        ok, detail = _windows_install_task()
+        # ANTENNA-005 item 2 — stop any loop already running, then clear every
+        # existing mechanism, so one install leaves exactly one mechanism and one
+        # loop. stop_loops() runs first (the ticket's order).
+        stopped = stop_loops()
+        _windows_remove_mechanisms()
+
+        installed_always = False
+        if always:
+            ok, detail = _windows_install_task(always=True)
+            if ok:
+                installed_always = True
+            else:
+                # ANTENNA-004/005 item 4 — the elevated/password prompt was refused.
+                # Say so in one plain line and install the ordinary logon task.
+                line = "always-on needs an elevated prompt on this computer; installed the logon task instead"
+                log(line)
+                print(line)
+                ok, detail = _windows_install_task(always=False)
+        else:
+            ok, detail = _windows_install_task(always=False)
+
         if ok:
             log(detail)
+            print(f"stopped: {stopped} process(es)")
+            print(f"installed: {'task (always)' if installed_always else 'task'}")
             return 0
-        # ANTENNA-004 item 2 — schtasks was refused (commonly "Access is denied"
-        # from a non-elevated prompt). Fall back to the Startup folder, which needs
-        # no elevation, and start the loop now so the bee is reachable at once.
+        # item 3 — /XML refused for any reason: fall back to the Startup folder as
+        # 0.3.1 does, start the loop now, and say so.
         log(f"schtasks did not create the task ({detail}); falling back to the Startup folder")
         sok, sdetail = _windows_write_startup()
         if not sok:
@@ -2118,67 +2516,41 @@ def _service_windows(action: str) -> int:
             )
         log(sdetail)
         _start_detached_loop()
+        print(f"stopped: {stopped} process(es)")
+        print("installed: startup-folder")
         return 0
     if action == "uninstall":
-        removed: List[str] = []
-        try:
-            out = subprocess.run(["schtasks", "/Delete", "/TN", WINDOWS_TASK_NAME, "/F"], capture_output=True, timeout=30)
-            if out.returncode == 0:
-                removed.append("task")
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            pass
-        startup = windows_startup_path()
-        if startup.exists():
-            try:
-                startup.unlink()
-                removed.append("startup-folder")
-            except OSError as exc:
-                log(f"could not remove {startup}: {exc}")
+        # item 2 — stop the loop it finds, then remove every mechanism present, then
+        # report both.
+        stopped = stop_loops()
+        removed = _windows_remove_mechanisms()
         log(f"removed Windows always-on registration: {', '.join(removed) if removed else 'nothing was present'}")
+        print(f"stopped: {stopped} process(es)")
+        print(f"removed: {', '.join(removed) if removed else 'nothing'}")
         return 0
-    # status — name the mechanism (item 2) and the interpreter in use (item 1).
-    task_installed, task_running = _windows_task_state()
-    startup = windows_startup_path().exists()
-    python, fellback = windows_interpreter()
-    mechanism = "task" if task_installed else ("startup-folder" if startup else "none")
-    installed = task_installed or startup
-    print(f"installed: {'yes' if installed else 'no'}")
-    print(f"mechanism: {mechanism}")
-    if task_installed:
-        print(f"running: {'yes' if task_running else 'no'}")
-    elif startup:
-        print("running: unknown (startup-folder runs at logon)")
-    else:
-        print("running: no")
-    note = "  (pythonw.exe not found beside python.exe; a console window will show)" if fellback else ""
-    print(f"interpreter: {python}{note}")
-    return 0 if installed else 1
+    return _service_status()
 
 
 def service_mechanism() -> str:
-    """Which always-on mechanism is currently registered on this host — one of
-    `task` / `startup-folder` / `systemd` / `launchd` / `none`. Used by `--join`
-    to name the mechanism in its summary (item 3)."""
-    if IS_WINDOWS:
-        if _windows_task_state()[0]:
-            return "task"
-        if windows_startup_path().exists():
-            return "startup-folder"
-        return "none"
-    if sys.platform == "darwin":
-        return "launchd" if launchd_plist_path().exists() else "none"
-    return "systemd" if systemd_unit_path().exists() else "none"
+    """Which always-on mechanism is currently registered on this host, by inspection
+    — the first of `task` / `startup-folder` / `systemd` / `launchd`, or `none`.
+    Used by `--join` to name the mechanism in its summary (item 3)."""
+    present = _present_mechanisms()
+    return present[0] if present else "none"
 
 
-def cmd_service(action: str, print_only: bool) -> int:
-    """ANTENNA-003 ruling 7 — keep Antenna always on, per-user, never root."""
+def cmd_service(action: str, print_only: bool, always: bool = False) -> int:
+    """ANTENNA-003 ruling 7 — keep Antenna always on, per-user, never root.
+    ANTENNA-005 — status reports what exists, install/uninstall own the loop."""
     if print_only:
         return _service_print()
+    if action == "status":
+        return _service_status()
     if IS_WINDOWS:
-        return _service_windows(action)
+        return _service_windows(action, always=always)
     if sys.platform == "darwin":
-        return _service_macos(action)
-    return _service_linux(action)
+        return _service_macos(action, always=always)
+    return _service_linux(action, always=always)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2209,6 +2581,8 @@ def build_parser() -> argparse.ArgumentParser:
     service = sub.add_parser("service", help="keep Antenna always on (per-user, never root)")
     service.add_argument("action", choices=["install", "uninstall", "status"], help="what to do")
     service.add_argument("--print", dest="print_only", action="store_true", help="show the unit/plist/command without writing")
+    service.add_argument("--always", dest="always", action="store_true",
+                         help="attempt always-on before login (Windows: a password prompt from schtasks; Linux: lingering)")
     return parser
 
 
@@ -2248,7 +2622,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "pair":
         return cmd_pair(confirmed=bool(args.confirmed), status=bool(args.status))
     if args.command == "service":
-        return cmd_service(action=args.action, print_only=bool(getattr(args, "print_only", False)))
+        return cmd_service(
+            action=args.action,
+            print_only=bool(getattr(args, "print_only", False)),
+            always=bool(getattr(args, "always", False)),
+        )
 
     build_parser().print_help()
     return 0

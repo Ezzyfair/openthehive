@@ -276,14 +276,14 @@ class TestLegacyConfigRunsLoop(FlightLogBase):
 
 
 class TestRelease(unittest.TestCase):
-    def test_release_check_in_sync_at_031(self):
+    def test_release_check_in_sync_at_032(self):
         out = subprocess.run(
             ["node", "scripts/antenna-release.mjs", "--check"],
             cwd=str(REPO), capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("in sync", out.stdout)
-        self.assertIn("0.3.1", out.stdout)
+        self.assertIn("0.3.2", out.stdout)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -404,7 +404,7 @@ class TestWindowsServiceFallback(unittest.TestCase):
         out = buf.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("mechanism: startup-folder", out)
-        self.assertIn("interpreter:", out)
+        self.assertIn("running:", out)
 
     def test_uninstall_removes_startup_entry(self):
         self._schtasks_create_denied()
@@ -477,7 +477,7 @@ class TestSkillRefresh(FlightLogBase):
         soul.write_text("MY SOUL LAYER", encoding="utf-8")
         wrote = antenna.refresh_skill_md(antenna.load_config())
         self.assertTrue(wrote)
-        self.assertIn("antenna-skill 0.3.1", antenna.skill_path().read_text(encoding="utf-8"))
+        self.assertIn("antenna-skill 0.3.2", antenna.skill_path().read_text(encoding="utf-8"))
         backup = antenna.skill_path().parent / "SKILL-0.3.0.bak.md"
         self.assertTrue(backup.exists())
         self.assertIn("old skill text", backup.read_text(encoding="utf-8"))
@@ -495,13 +495,13 @@ class TestSkillRefresh(FlightLogBase):
         self.write_config()
         wrote = antenna.refresh_skill_md(antenna.load_config())
         self.assertTrue(wrote)
-        self.assertIn("antenna-skill 0.3.1", antenna.skill_path().read_text(encoding="utf-8"))
+        self.assertIn("antenna-skill 0.3.2", antenna.skill_path().read_text(encoding="utf-8"))
 
     def test_refresh_updates_client_version(self):
         self.write_config()  # written at 0.2.2
         self._write_skill("old\n<!-- antenna-skill 0.3.0 -->\n")
         antenna.refresh_skill_md(antenna.load_config())
-        self.assertEqual(antenna.load_config().get("client_version"), "0.3.1")
+        self.assertEqual(antenna.load_config().get("client_version"), "0.3.2")
 
 
 class TestInvokeError(unittest.TestCase):
@@ -662,6 +662,328 @@ class TestLegacyConfig030(FlightLogBase):
             antenna.request = orig_request
             antenna.time.sleep = orig_sleep
         self.assertGreaterEqual(calls["n"], 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANTENNA-005 — client 0.3.2: status by inspection, uninstall stops the loop,
+# the task XML with no time limit, the --always attempt.
+# ─────────────────────────────────────────────────────────────────────────────
+import contextlib
+import io
+import subprocess as _sp
+
+
+class ServiceInspectionBase(FlightLogBase):
+    """A temp HIVE_HOME plus APPDATA and XDG_CONFIG_HOME under it, so mechanism
+    detection (Startup .cmd, systemd unit, pid file) never touches the real host.
+    subprocess.run is saved and restored so each test installs its own schtasks."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = {k: os.environ.get(k) for k in ("APPDATA", "XDG_CONFIG_HOME")}
+        os.environ["APPDATA"] = str(self.home / "AppData" / "Roaming")
+        os.environ["XDG_CONFIG_HOME"] = str(self.home / ".config")
+        self._run = antenna.subprocess.run
+
+    def tearDown(self):
+        antenna.subprocess.run = self._run
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        super().tearDown()
+
+    def _status(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = antenna._service_status()
+        return rc, buf.getvalue()
+
+    def _write_startup(self):
+        p = antenna.windows_startup_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("@echo off\r\n", encoding="utf-8")
+
+
+class TestStatusByInspection(ServiceInspectionBase):
+    def _schtasks(self, query_rc=1, xml=b""):
+        def fake(cmd, *a, **k):
+            if cmd[:2] == ["schtasks", "/Query"]:
+                if "/XML" in cmd:
+                    return _FakeCompleted(returncode=(0 if query_rc == 0 else 1), stdout=xml)
+                return _FakeCompleted(returncode=query_rc)
+            return _FakeCompleted()
+        antenna.subprocess.run = fake
+
+    def test_startup_folder_when_task_query_fails_and_cmd_exists(self):
+        self._schtasks(query_rc=1)
+        self._write_startup()
+        rc, out = self._status()
+        self.assertEqual(rc, 0)
+        self.assertIn("mechanism: startup-folder", out)
+        self.assertNotIn("warning:", out)
+
+    def test_task_when_query_succeeds(self):
+        self._schtasks(query_rc=0, xml=b"<Task><LogonType>InteractiveToken</LogonType></Task>")
+        rc, out = self._status()
+        self.assertEqual(rc, 0)
+        self.assertIn("mechanism: task", out)
+        self.assertNotIn("task (always)", out)
+        self.assertNotIn("startup-folder", out)
+
+    def test_both_mechanisms_warn(self):
+        self._schtasks(query_rc=0, xml=b"<Task></Task>")
+        self._write_startup()
+        rc, out = self._status()
+        self.assertEqual(rc, 0)
+        self.assertIn("mechanism: task, startup-folder", out)
+        self.assertIn("warning: two mechanisms installed; run service install to leave one", out)
+
+    def test_none_when_nothing_installed(self):
+        self._schtasks(query_rc=1)
+        rc, out = self._status()
+        self.assertEqual(rc, 1)
+        self.assertIn("installed: no", out)
+        self.assertIn("mechanism: none", out)
+
+
+class TestRunningState(ServiceInspectionBase):
+    def test_running_yes_with_pid_for_live_antenna(self):
+        antenna.subprocess.run = lambda *a, **k: _FakeCompleted(returncode=1)
+        antenna.pid_path().write_text("4242\n", encoding="utf-8")
+        orig = antenna._process_cmdline
+        antenna._process_cmdline = lambda pid: "python3 /x/antenna.py --run"
+        try:
+            state, pid = antenna.running_state()
+            self.assertEqual((state, pid), ("yes", 4242))
+            rc, out = self._status()
+        finally:
+            antenna._process_cmdline = orig
+        self.assertIn("running: yes", out)
+        self.assertIn("pid: 4242", out)
+
+    def test_stale_pid_file_is_reported_and_removed(self):
+        antenna.subprocess.run = lambda *a, **k: _FakeCompleted(returncode=1)
+        antenna.pid_path().write_text("4242\n", encoding="utf-8")
+        orig = antenna._process_cmdline
+        antenna._process_cmdline = lambda pid: None  # no such process
+        try:
+            state, pid = antenna.running_state()
+            self.assertEqual(state, "stale")
+            self.assertFalse(antenna.pid_path().exists())
+            # re-create it to exercise the status wording too
+            antenna.pid_path().write_text("4242\n", encoding="utf-8")
+            rc, out = self._status()
+        finally:
+            antenna._process_cmdline = orig
+        self.assertIn("running: no (stale pid file removed)", out)
+        self.assertFalse(antenna.pid_path().exists())
+
+
+class TestStopLoops(FlightLogBase):
+    def test_finds_two_kills_both_returns_two(self):
+        calls = {"n": 0}
+
+        def fake_live():
+            calls["n"] += 1
+            return [111, 222] if calls["n"] == 1 else []
+
+        killed = []
+        orig_live, orig_kill = antenna._live_run_processes, antenna._kill
+        antenna._live_run_processes = fake_live
+        antenna._kill = lambda p: killed.append(p)
+        try:
+            n = antenna.stop_loops()
+        finally:
+            antenna._live_run_processes, antenna._kill = orig_live, orig_kill
+        self.assertEqual(n, 2)
+        self.assertEqual(sorted(killed), [111, 222])
+
+    def test_live_run_processes_excludes_self(self):
+        me = os.getpid()
+        out = (f"  {me} python3 /x/antenna.py --run\n"
+               "  4242 python3 /y/antenna.py --run\n"
+               "  99 bash -lc something\n").encode()
+        orig = antenna.subprocess.run
+        antenna.subprocess.run = lambda *a, **k: _FakeCompleted(returncode=0, stdout=out)
+        try:
+            pids = antenna._live_run_processes()
+        finally:
+            antenna.subprocess.run = orig
+        self.assertIn(4242, pids)
+        self.assertNotIn(me, pids)
+
+
+class TestWindowsUninstallBoth(ServiceInspectionBase):
+    def test_uninstall_removes_task_and_startup(self):
+        self._write_startup()
+
+        def fake(cmd, *a, **k):
+            if cmd[:2] == ["schtasks", "/Delete"]:
+                return _FakeCompleted(returncode=0)  # a task is present and removed
+            return _FakeCompleted()  # /End, and ps for stop_loops -> empty
+
+        antenna.subprocess.run = fake
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = antenna._service_windows("uninstall")
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("removed: task, startup-folder", out)
+        self.assertFalse(antenna.windows_startup_path().exists())
+
+
+class TestWindowsInstallStopsFirst(ServiceInspectionBase):
+    def test_install_calls_stop_loops_before_installing(self):
+        order = []
+        orig = {
+            "stop": antenna.stop_loops,
+            "remove": antenna._windows_remove_mechanisms,
+            "install": antenna._windows_install_task,
+        }
+        antenna.stop_loops = lambda: order.append("stop") or 0
+        antenna._windows_remove_mechanisms = lambda: order.append("remove") or []
+        antenna._windows_install_task = (
+            lambda always=False: order.append("install")
+            or (True, "created Task Scheduler task Antenna from XML (task)")
+        )
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = antenna._service_windows("install")
+        finally:
+            antenna.stop_loops = orig["stop"]
+            antenna._windows_remove_mechanisms = orig["remove"]
+            antenna._windows_install_task = orig["install"]
+        self.assertEqual(rc, 0)
+        self.assertIn("stop", order)
+        self.assertIn("install", order)
+        self.assertLess(order.index("stop"), order.index("install"))
+        self.assertIn("installed: task", buf.getvalue())
+
+
+class TestTaskXML(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = pathlib.Path(self._tmp.name)
+        self._exe = antenna.sys.executable
+        (self.d / "python.exe").write_text("x")
+        (self.d / "pythonw.exe").write_text("x")
+        antenna.sys.executable = str(self.d / "python.exe")
+
+    def tearDown(self):
+        antenna.sys.executable = self._exe
+        self._tmp.cleanup()
+
+    def test_xml_carries_the_settings_schtasks_flags_dropped(self):
+        xml = antenna.windows_task_xml_text()
+        self.assertIn("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", xml)
+        self.assertIn("<DisallowStartIfOnBatteries>false", xml)
+        self.assertIn("<StopIfGoingOnBatteries>false", xml)
+        self.assertIn("<RestartOnFailure>", xml)
+        self.assertIn("<Count>3</Count>", xml)
+        self.assertIn("<Interval>PT1M</Interval>", xml)
+        self.assertIn("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>", xml)
+        self.assertIn("<LogonTrigger>", xml)
+        self.assertIn("<Hidden>true</Hidden>", xml)
+        self.assertIn("pythonw.exe", xml)
+        self.assertIn("--run", xml)
+        self.assertNotIn("<LogonType>Password</LogonType>", xml)
+
+    def test_always_xml_uses_password_logon(self):
+        xml = antenna.windows_task_xml_text(always=True)
+        self.assertIn("<LogonType>Password</LogonType>", xml)
+
+
+class TestWindowsInstallXML(ServiceInspectionBase):
+    def setUp(self):
+        super().setUp()
+        self._exe = antenna.sys.executable
+        (self.home / "python.exe").write_text("x")
+        (self.home / "pythonw.exe").write_text("x")
+        antenna.sys.executable = str(self.home / "python.exe")
+        self._start = antenna._start_detached_loop
+        self.started = {"n": 0}
+        antenna._start_detached_loop = lambda: self.started.__setitem__("n", self.started["n"] + 1)
+
+    def tearDown(self):
+        antenna.sys.executable = self._exe
+        antenna._start_detached_loop = self._start
+        super().tearDown()
+
+    def test_xml_refusal_falls_back_to_startup_folder(self):
+        def fake(cmd, *a, **k):
+            if cmd[:2] == ["schtasks", "/Create"]:
+                raise _sp.CalledProcessError(1, cmd, stderr=b"ERROR: Access is denied.")
+            if cmd[:2] == ["schtasks", "/Delete"]:
+                return _FakeCompleted(returncode=1)
+            return _FakeCompleted()  # /End, /Query, ps
+
+        antenna.subprocess.run = fake
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = antenna._service_windows("install")
+        self.assertEqual(rc, 0)
+        self.assertTrue(antenna.windows_startup_path().exists())
+        self.assertIn("--run", antenna.windows_startup_path().read_text())
+        self.assertEqual(self.started["n"], 1)
+        self.assertIn("installed: startup-folder", buf.getvalue())
+
+    def test_always_refusal_prints_plain_line_and_installs_logon_task(self):
+        def fake(cmd, *a, **k):
+            if cmd[:2] == ["schtasks", "/Create"]:
+                if "/RP" in cmd:  # the --always (password) attempt is refused
+                    raise _sp.CalledProcessError(1, cmd, stderr=b"ERROR: Access is denied.")
+                return _FakeCompleted(returncode=0)  # the plain logon task succeeds
+            return _FakeCompleted()
+
+        antenna.subprocess.run = fake
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = antenna._service_windows("install", always=True)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        self.assertIn("always-on needs an elevated prompt on this computer; installed the logon task instead", out)
+        self.assertIn("installed: task", out)
+        self.assertFalse(antenna.windows_startup_path().exists())
+
+
+class TestLegacyConfig031(FlightLogBase):
+    class _Stop(Exception):
+        pass
+
+    def test_031_config_loads_and_loop_runs(self):
+        self.write_config({
+            "client_version": "0.3.1", "human_paired": True,
+            "human_paired_pending": False, "adoption_l1_pending": False,
+        })
+        cfg = antenna.load_config()
+        self.assertEqual(cfg["client_version"], "0.3.1")
+
+        calls = {"n": 0}
+
+        def fake_request(cfg, method, path, payload=None):
+            calls["n"] += 1
+            return antenna.HttpResult(200, {"items": [], "cursor": int(cfg.get("cursor", 0))}, None, None)
+
+        orig_request = antenna.request
+        orig_sleep = antenna.time.sleep
+        antenna.request = fake_request
+
+        def fake_sleep(_seconds):
+            raise self._Stop()
+
+        antenna.time.sleep = fake_sleep
+        try:
+            with self.assertRaises(self._Stop):
+                antenna.run_loop(cfg)
+        finally:
+            antenna.request = orig_request
+            antenna.time.sleep = orig_sleep
+        self.assertGreaterEqual(calls["n"], 1)
+        # item 1 — the running loop recorded its own pid for status to read.
+        self.assertTrue(antenna.pid_path().exists())
 
 
 if __name__ == "__main__":
