@@ -34,7 +34,12 @@ export type BeeLimitScope =
   | 'member_reply'
   | 'signin_ip'
   | 'signin_email'
-  | 'signin_code';
+  | 'signin_code'
+  | 'mail_read'
+  | 'mail_read_ip'
+  | 'mail_send_hour'
+  | 'mail_send_day'
+  | 'mail_send_ip';
 
 export interface LimitSpec {
   limit: number;
@@ -60,6 +65,14 @@ export const BEE_LIMITS: Record<BeeLimitScope, LimitSpec> = {
   signin_email: { limit: 5, windowSeconds: 3600, by: 'token' },
   // Six digits are guessable given unlimited tries; this is what makes them not.
   signin_code: { limit: 5, windowSeconds: 900, by: 'token' },
+  // ANTENNA-006 · R9. mail.read 6/min per token; mail.send 10/hour and 30/day per
+  // token, each recipient counting as one (enforceRateLimitTimes); each verb has a
+  // per-IP floor of 60/hour beside it.
+  mail_read: { limit: 6, windowSeconds: 60, by: 'token' },
+  mail_read_ip: { limit: 60, windowSeconds: 3600, by: 'ip' },
+  mail_send_hour: { limit: 10, windowSeconds: 3600, by: 'token' },
+  mail_send_day: { limit: 30, windowSeconds: 86400, by: 'token' },
+  mail_send_ip: { limit: 60, windowSeconds: 3600, by: 'ip' },
 };
 
 export interface EnforceInput {
@@ -134,4 +147,14 @@ export async function enforceRateLimit(input: EnforceInput): Promise<void> {
   await checkRunaway({ trigger: 'rate_limit', agentId: input.agentId ?? null, ip: input.ip ?? null });
 
   throw new BeeError(429, 'rate_limited', `rate limit exceeded for ${input.scope}`, retryAfter);
+}
+
+/**
+ * ANTENNA-006 · R9 — counts one request as `times` hits against one bucket, so a
+ * five-address send uses five. Each hit goes through enforceRateLimit unchanged:
+ * the same fixed window, the same fail-closed 503, and the same rate_limit row and
+ * runaway check on the hit that crosses the ceiling.
+ */
+export async function enforceRateLimitTimes(input: EnforceInput, times: number): Promise<void> {
+  for (let i = 0; i < times; i++) await enforceRateLimit(input);
 }
