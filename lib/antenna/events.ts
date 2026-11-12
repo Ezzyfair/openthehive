@@ -26,7 +26,10 @@ export type BeeEvent =
   | 'adoption_l1'
   | 'human_paired'
   | 'unreachable'
-  | 'unsent_replies';
+  | 'unsent_replies'
+  // ANTENNA-006 — migration 20261112_bee_mail.sql widens the CHECK for these two.
+  | 'mail_sent'
+  | 'mail_refused';
 
 /**
  * The slice of the Supabase client these writers use. Declared so the self-test

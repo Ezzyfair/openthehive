@@ -58,6 +58,19 @@ export const heartbeatSchema: Schema = {
 /** POST /api/bee/revoke takes {} — no fields, and no extra ones either. */
 export const revokeSchema: Schema = {};
 
+/**
+ * ANTENNA-006 — POST /api/bee/mail/send. Closed like every other body. The shape
+ * is checked here; the rules (one to five recipients, the recipient rule, one-line
+ * subject of at most 200 characters, the 32 KB body cap) are checked after the
+ * token is resolved, so each refusal is a 422 with a reason (or 413) and a row.
+ * The bounds below only keep an absurd body from reaching that code.
+ */
+export const mailSendSchema: Schema = {
+  to: { kind: 'stringArray', maxItems: 20, maxLen: 320 },
+  subject: { kind: 'string', minLen: 1, maxLen: 2000 },
+  body_text: { kind: 'string', minLen: 1, maxLen: 1_000_000 },
+};
+
 /** §5.3 reply cap: over 16384 is 413, not 400. */
 export const REPLY_CONTENT_MAX = 16384;
 
