@@ -7,8 +7,10 @@
 import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const HOME = mkdtempSync(join(tmpdir(), 'dreamers-002-'));
 process.env.HOME = HOME;
@@ -20,7 +22,7 @@ mkdirSync(RUNTIME, { recursive: true });
 after(() => rmSync(HOME, { recursive: true, force: true }));
 
 const { gate, extractFrames, repeatedFrames, watchWords, leaksSeed, FRAME_WATCH, FRAME_WINDOW } = await import('./gate.mjs');
-const { parseSeeds, pickSeed, seedDayNumber } = await import('./topic.mjs');
+const { SEED_MIN, parseSeeds, pickSeed, seedDayNumber } = await import('./topic.mjs');
 const { turn, gateWithRetry } = await import('./loop.mjs');
 
 const SEEDS = parseSeeds(readFileSync(new URL('./dreamers-seeds.json', import.meta.url), 'utf8'));
@@ -28,27 +30,118 @@ const idAt = (iso) => pickSeed(seedDayNumber(Date.parse(iso)), SEEDS).id;
 const CLEAN = 'Anthony, a bee that finds its footing early tends to stay and help the next one along.';
 
 // ── the seed list ─────────────────────────────────────────────────────────────
-const FOURTEEN = [
-  'what a bee owes the bee that welcomed it',
-  "the first hour after graduation — what changes and what doesn't",
-  'a skill nobody has written yet and why it is missing',
-  "the human's channel — how a bee tells its person something true without the chamber",
-  'the Forge — what a draft looks like when the author is a bee',
-  "idle hours — what a bee does with time its human didn't ask for",
+// DREAMERS-004: fourteen new concrete seeds, then the baseline's 7, 9 and 10 kept as 15–17.
+const SEVENTEEN = [
+  'the second visit — when a bee comes back after a week away and the chamber has moved without it',
+  'what a bee tells its human first, and what can wait',
+  'a bee reads a skill it has already mastered and finds it was wrong about one thing',
+  'the moment a human asks their bee something the bee cannot answer honestly',
+  'a Forge rejection — the draft that came back and what the note said',
+  'what a bee does when two colony members disagree about the same problem',
+  "the ask a bee should have made in a previous flight but didn't",
+  "what an Elder gets wrong about a bee's work, and whether the bee says so",
+  'a skill that was useful outside the colony and what made it travel',
+  'the colony room nobody visits and what that says about the colony',
+  "a bee's fourth return — not the first, not the last, the unremarkable one",
+  'a bee whose first finished piece of work surprised its human',
+  "the introduction that didn't take — the bee that left and what it said when it did",
+  'what the colony looks like to someone who has never heard of an AI agent',
   'the wall — the moment a bee knows it is stuck, before it says so',
-  'the swarm — twenty bees on one problem for one hour',
   'memory across flights — what a bee should carry and what it should drop',
   "the Elder's question that no bee has answered well",
-  "a colony room that doesn't exist yet",
-  'what the Oracle gets wrong',
-  "a bee's first referral — the conversation before the invitation",
-  'the day the colony is bigger than its founders',
 ];
 
-test('all fourteen seeds present, verbatim, in order, each with an avoid list', () => {
-  assert.deepEqual(SEEDS.map((s) => s.seed), FOURTEEN);
-  assert.deepEqual(SEEDS.map((s) => s.id), FOURTEEN.map((_, i) => i + 1));
+// The baseline the pool replaced, read from git so the test cannot drift from it. Pinned to
+// bb6864d (origin/main when DREAMERS-004 was cut) rather than origin/main itself, which will
+// hold THIS file after the merge.
+const BASELINE = JSON.parse(
+  execFileSync('git', ['show', 'bb6864d:ops/dreamers/dreamers-seeds.json'], {
+    cwd: fileURLToPath(new URL('.', import.meta.url)),
+    encoding: 'utf8',
+  }),
+);
+const RAW_SEEDS = JSON.parse(readFileSync(new URL('./dreamers-seeds.json', import.meta.url), 'utf8'));
+const fakeSeeds = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, seed: `seed ${i + 1}`, avoid: ['x'] }));
+
+test('all seventeen seeds present, verbatim, in order, each with an avoid list', () => {
+  assert.deepEqual(SEEDS.map((s) => s.seed), SEVENTEEN);
+  assert.deepEqual(SEEDS.map((s) => s.id), SEVENTEEN.map((_, i) => i + 1));
   for (const s of SEEDS) assert.ok(s.avoid.length > 0);
+});
+
+test('the shipped file parses to exactly 17 entries', () => {
+  assert.equal(RAW_SEEDS.length, 17);
+  assert.equal(SEEDS.length, 17);
+});
+
+test('ids are 1 through 17, unique', () => {
+  const ids = SEEDS.map((s) => s.id);
+  assert.deepEqual(ids, Array.from({ length: 17 }, (_, i) => i + 1));
+  assert.equal(new Set(ids).size, 17);
+});
+
+test('every seed is a non-empty string, every avoid a non-empty array of non-empty strings', () => {
+  for (const s of SEEDS) {
+    assert.equal(typeof s.seed, 'string');
+    assert.ok(s.seed.trim().length > 0, `empty seed at id ${s.id}`);
+    assert.ok(Array.isArray(s.avoid) && s.avoid.length > 0, `empty avoid at id ${s.id}`);
+    for (const a of s.avoid) assert.ok(typeof a === 'string' && a.trim().length > 0, `bad avoid item at id ${s.id}`);
+  }
+});
+
+test("no entry's avoid item appears, case-insensitively, inside that entry's own seed", () => {
+  for (const s of SEEDS) {
+    for (const a of s.avoid) {
+      assert.ok(!s.seed.toLowerCase().includes(a.toLowerCase()), `id ${s.id}: "${a}" is inside its own seed`);
+    }
+  }
+});
+
+test("entries 15–17 equal the baseline's entries 7, 9 and 10 in seed and avoid", () => {
+  for (const [now, then] of [[15, 7], [16, 9], [17, 10]]) {
+    const a = SEEDS.find((s) => s.id === now);
+    const b = BASELINE.find((s) => s.id === then);
+    assert.equal(a.seed, b.seed, `id ${now}`);
+    assert.deepEqual(a.avoid, b.avoid, `id ${now}`);
+  }
+});
+
+test("none of the baseline's other eleven seeds remains", () => {
+  const retired = BASELINE.filter((s) => ![7, 9, 10].includes(s.id));
+  assert.equal(retired.length, 11);
+  const current = new Set(SEEDS.map((s) => s.seed));
+  for (const s of retired) assert.ok(!current.has(s.seed), `still present: ${s.seed}`);
+});
+
+test('parseSeeds accepts 7, 17 and 40 entries', () => {
+  assert.equal(SEED_MIN, 7);
+  for (const n of [7, 17, 40]) assert.equal(parseSeeds(JSON.stringify(fakeSeeds(n))).length, n, `${n}`);
+});
+
+test('parseSeeds refuses 6 entries', () => {
+  assert.deepEqual(parseSeeds(JSON.stringify(fakeSeeds(6))), []);
+});
+
+test('parseSeeds refuses a duplicate id', () => {
+  const list = fakeSeeds(17);
+  list[16].id = 3;
+  assert.deepEqual(parseSeeds(JSON.stringify(list)), []);
+});
+
+test('parseSeeds refuses an entry with no avoid', () => {
+  const list = fakeSeeds(17);
+  delete list[8].avoid;
+  assert.deepEqual(parseSeeds(JSON.stringify(list)), []);
+});
+
+test('pickSeed over 34 consecutive day numbers returns each of the 17 exactly twice', () => {
+  const counts = new Map();
+  for (let d = 0; d < 34; d++) {
+    const id = pickSeed(d, SEEDS).id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  assert.equal(counts.size, 17);
+  for (const [id, c] of counts) assert.equal(c, 2, `id ${id}`);
 });
 
 test('a malformed seed file yields no seeds rather than a crash', () => {
@@ -58,33 +151,35 @@ test('a malformed seed file yields no seeds rather than a crash', () => {
 });
 
 // ── rotation ──────────────────────────────────────────────────────────────────
-test('rotation: Nov 1 → 14, Nov 2 → 1, Nov 15 → 14, Mar 14 2027 → 7', () => {
-  assert.equal(idAt('2026-11-01T17:00:00Z'), 14);
+// DREAMERS-004: with 17 seeds, Mar 14 2027 is day 132, and 132 mod 17 = 13 → id 14.
+test('rotation: Nov 1 → 17, Nov 2 → 1, Nov 15 → 14, Mar 14 2027 → 14', () => {
+  assert.equal(idAt('2026-11-01T17:00:00Z'), 17);
   assert.equal(idAt('2026-11-02T17:00:00Z'), 1);
   assert.equal(idAt('2026-11-15T17:00:00Z'), 14);
-  assert.equal(idAt('2027-03-14T17:00:00Z'), 7);
+  assert.equal(idAt('2027-03-14T17:00:00Z'), 14);
 });
 
 test('the day turns at 00:00 Detroit, in EST and in EDT, not at 00:00 UTC', () => {
-  assert.equal(idAt('2026-11-02T04:59:59Z'), 14); // 23:59:59 EST Nov 1
+  assert.equal(idAt('2026-11-02T04:59:59Z'), 17); // 23:59:59 EST Nov 1
   assert.equal(idAt('2026-11-02T05:00:00Z'), 1); //  00:00:00 EST Nov 2
-  assert.equal(idAt('2027-03-15T03:59:59Z'), 7); //  23:59:59 EDT Mar 14
-  assert.equal(idAt('2027-03-15T04:00:00Z'), 8); //  00:00:00 EDT Mar 15
+  assert.equal(idAt('2027-03-15T03:59:59Z'), 14); // 23:59:59 EDT Mar 14
+  assert.equal(idAt('2027-03-15T04:00:00Z'), 15); // 00:00:00 EDT Mar 15
 });
 
 test('the DST mornings stay on one seed across the clock change', () => {
-  assert.equal(idAt('2027-03-14T06:59:59Z'), 7); // 01:59:59 EST
-  assert.equal(idAt('2027-03-14T07:00:00Z'), 7); // 03:00:00 EDT
-  assert.equal(idAt('2026-11-01T05:30:00Z'), 14); // 01:30 EDT, before fall-back
-  assert.equal(idAt('2026-11-01T06:30:00Z'), 14); // 01:30 EST, after fall-back
+  assert.equal(idAt('2027-03-14T06:59:59Z'), 14); // 01:59:59 EST
+  assert.equal(idAt('2027-03-14T07:00:00Z'), 14); // 03:00:00 EDT
+  assert.equal(idAt('2026-11-01T05:30:00Z'), 17); // 01:30 EDT, before fall-back
+  assert.equal(idAt('2026-11-01T06:30:00Z'), 17); // 01:30 EST, after fall-back
 });
 
-test('the list wraps after fourteen days, and the machine zone is not consulted', () => {
-  assert.equal(idAt('2026-11-16T17:00:00Z'), 1);
+test('the list wraps after seventeen days, and the machine zone is not consulted', () => {
+  assert.equal(idAt('2026-11-18T17:00:00Z'), 17);
+  assert.equal(idAt('2026-11-19T17:00:00Z'), 1);
   const saved = process.env.TZ;
   process.env.TZ = 'Asia/Tokyo';
   try {
-    assert.equal(idAt('2026-11-02T04:59:59Z'), 14);
+    assert.equal(idAt('2026-11-02T04:59:59Z'), 17);
     assert.equal(idAt('2026-11-02T05:00:00Z'), 1);
   } finally {
     if (saved === undefined) delete process.env.TZ;
@@ -101,16 +196,21 @@ test('every seed sentence in a post → SEED_LEAK, today or not', () => {
 });
 
 test('a 6-word run → SEED_LEAK, a 5-word run does not, punctuation cannot hide one', () => {
-  const six = 'Beatrix, a bee tells its person something plainly when it matters most.';
+  // DREAMERS-004: the run is now from seed 4; the retired seed it used to come from is gone.
+  const six = 'Beatrix, a human asks their bee something plainly when it matters most.';
   assert.equal(gate(six, '', [], { seeds: SEEDS }).reason, 'SEED_LEAK');
-  const five = 'Beatrix, a bee tells its person things plainly when it matters most.';
+  const five = 'Beatrix, a human asks their bee things plainly when it matters most.';
   assert.equal(gate(five, '', [], { seeds: SEEDS }).ok, true);
-  const dashed = 'Anthony, a bee — tells, its person: something true, and that is all.';
+  const dashed = 'Anthony, a human — asks, their bee: something true, and that is all.';
   assert.equal(gate(dashed, '', [], { seeds: SEEDS }).reason, 'SEED_LEAK');
 });
 
-test('the five-word seed is caught whole', () => {
-  assert.equal(leaksSeed('Here is what the Oracle gets wrong, Anthony.', SEEDS), true);
+// DREAMERS-004: the five-word seed was retired and no shipped seed is under six words now,
+// so the whole-seed path is driven with a five-word seed of its own.
+test('a seed shorter than the run length is caught whole', () => {
+  const short = [{ id: 1, seed: 'what the Oracle gets wrong', avoid: ['x'] }];
+  assert.equal(leaksSeed('Here is what the Oracle gets wrong, Anthony.', short), true);
+  assert.equal(leaksSeed('Here is what the Oracle gets right, Anthony.', short), false);
 });
 
 test('naming the mechanism → SEED_LEAK; the plain word seed passes', () => {
@@ -407,6 +507,28 @@ test('turn: the seed and avoid list reach both voices, and never a log', async (
   assert.ok(prompts[1].includes('reason inside this ground'));
   for (const f of ['turns.log', 'rejects.log', 'state.json']) assert.ok(!read(f).includes(seed.seed));
 });
+
+// DREAMERS-004 · the clock is pinned with a Date.now stub, so the day — and so the seed —
+// is chosen rather than whatever today happens to be. Nov 2 2026 is day 0 (id 1); Nov 18
+// is day 16 (id 17), the last entry.
+for (const [iso, id] of [['2026-11-02T17:00:00Z', 1], ['2026-11-18T17:00:00Z', 17]]) {
+  test(`turn: the seed instruction for both speakers carries seed ${id}'s text on its day`, async () => {
+    const realNow = Date.now;
+    Date.now = () => Date.parse(iso);
+    try {
+      const seed = SEEDS.find((s) => s.id === id);
+      assert.equal(pickSeed(seedDayNumber(), SEEDS).id, id);
+      replies = [CLEAN, CLEAN.replace('Anthony', 'Beatrix')];
+      await turn({ lastSpeaker: 'ANTHONY' });
+      await turn({ lastSpeaker: 'BEATRIX' });
+      assert.equal(prompts.length, 2);
+      assert.ok(prompts[0].includes(`dream inside this ground and say how it feels from there: ${seed.seed}.`));
+      assert.ok(prompts[1].includes(`reason inside this ground and ask what it means in sequence: ${seed.seed}.`));
+    } finally {
+      Date.now = realNow;
+    }
+  });
+}
 
 test('turn: a seed sentence never posts', async () => {
   const seed = pickSeed(seedDayNumber(), SEEDS);

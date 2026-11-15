@@ -339,7 +339,7 @@ export function pickArc(dayIndex) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THE DAILY SEED — DREAMERS-002 §1.2. Fourteen territories, one a day.
+// THE DAILY SEED — DREAMERS-002 §1.2. A pool of seven or more, one a day (DREAMERS-004).
 // ─────────────────────────────────────────────────────────────────────────────
 // Stateless by the clock, like the topic and the arc. The day turns at 00:00 in
 // America/Detroit. The ticket names Python's `zoneinfo`; this loop is Node, so the same
@@ -348,7 +348,7 @@ export function pickArc(dayIndex) {
 // whole calendar days, so a 23- or 25-hour DST day cannot move the count.
 
 export const SEED_ZONE = 'America/Detroit';
-export const SEED_COUNT = 14;
+export const SEED_MIN = 7;
 const SEED_EPOCH_UTC = Date.UTC(2026, 10, 2);
 const SEED_DATE = new Intl.DateTimeFormat('en-US', {
   timeZone: SEED_ZONE,
@@ -364,21 +364,25 @@ export function seedDayNumber(nowMs = Date.now()) {
   return Math.round((Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) - SEED_EPOCH_UTC) / 86_400_000);
 }
 
-/** dreamers-seeds.json text → the fourteen entries, or [] if it is not exactly that. */
+/**
+ * dreamers-seeds.json text → the entries, or [] unless there are at least SEED_MIN of them,
+ * each with an id, a non-empty seed and an avoid array, and no id is used twice.
+ */
 export function parseSeeds(text) {
   try {
     const list = JSON.parse(String(text ?? ''));
     const fit =
       Array.isArray(list) &&
-      list.length === SEED_COUNT &&
-      list.every((s) => s?.id != null && typeof s.seed === 'string' && s.seed && Array.isArray(s.avoid));
+      list.length >= SEED_MIN &&
+      list.every((s) => s?.id != null && typeof s.seed === 'string' && s.seed && Array.isArray(s.avoid)) &&
+      new Set(list.map((s) => s.id)).size === list.length;
     return fit ? list : [];
   } catch {
     return [];
   }
 }
 
-/** The entry for a day: (days since 2026-11-02) mod 14, floored so day -1 wraps to the last. */
+/** The entry for a day: (days since 2026-11-02) mod the pool's length, floored so day -1 wraps to the last. */
 export function pickSeed(dayNumber, seeds) {
   if (!Array.isArray(seeds) || seeds.length === 0) return null;
   const n = seeds.length;

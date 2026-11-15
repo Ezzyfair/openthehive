@@ -245,6 +245,28 @@ merely poetic lines; that is the ruling, and the rejects are logged.
 same reason `CLAUDE.md` quotes them in order to define them. They are the only two files
 here that the three greps hit.
 
+## Refreshing the seeds
+
+`dreamers-seeds.json` is the daily seed pool. `topic.mjs:parseSeeds` takes any number of
+seeds from seven up (`SEED_MIN`), as long as each has an `id`, a non-empty `seed` and an
+`avoid` list and no two ids are the same. Otherwise the room gets no seed at all. The pool
+is refreshed **once a month**, always in the same way:
+
+1. **Ezzy proposes**: new seeds, the frames that `rejects.log` shows looping, and which
+   seeds to retire.
+2. **Francis rules** on the proposal.
+3. **The change arrives as a ticket**, built by the night build and audited by Nikita,
+   like any other change to this folder.
+
+Nobody edits the installed seed file by hand. The repo copy is the only one that changes,
+and `install.sh` carries it to the runtime.
+
+What a seed may be: a seed names **a specific moment or relationship, never a concept**.
+"the second visit — when a bee comes back after a week away" is a seed; "belonging" is
+not. **No seed invites talk of money, what a bee is paid, or bringing others in**, because this room is
+public. Words like that belong only in a seed's `avoid` list, which tells the room what not
+to say.
+
 ## Why the test command is a glob, not a directory
 
 The spec asks for `node --test ops/dreamers/`. On the Node in use here (v22.22.2) that
