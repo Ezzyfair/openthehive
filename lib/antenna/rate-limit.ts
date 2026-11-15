@@ -39,7 +39,11 @@ export type BeeLimitScope =
   | 'mail_read_ip'
   | 'mail_send_hour'
   | 'mail_send_day'
-  | 'mail_send_ip';
+  | 'mail_send_ip'
+  | 'room_poll'
+  | 'room_poll_ip'
+  | 'room_post'
+  | 'room_post_ip';
 
 export interface LimitSpec {
   limit: number;
@@ -73,6 +77,13 @@ export const BEE_LIMITS: Record<BeeLimitScope, LimitSpec> = {
   mail_send_hour: { limit: 10, windowSeconds: 3600, by: 'token' },
   mail_send_day: { limit: 30, windowSeconds: 86400, by: 'token' },
   mail_send_ip: { limit: 60, windowSeconds: 3600, by: 'ip' },
+  // ANTENNA-007 · R9. room.poll 6/min per token; room.post 6/hour per token (the
+  // per-UTC-day room limits of R24 sit on top, in lib/antenna/rooms.ts); each verb
+  // has a per-IP floor of 60/hour beside it.
+  room_poll: { limit: 6, windowSeconds: 60, by: 'token' },
+  room_poll_ip: { limit: 60, windowSeconds: 3600, by: 'ip' },
+  room_post: { limit: 6, windowSeconds: 3600, by: 'token' },
+  room_post_ip: { limit: 60, windowSeconds: 3600, by: 'ip' },
 };
 
 export interface EnforceInput {
