@@ -22,7 +22,7 @@ interface Stats {
   dreamersMessages: any[];
   honeycombs: any[];
   mrr: number;
-  totalCascadePaid: number;
+  totalSharesPaid: number;
   systemHealth: SystemHealth;
   recentMessages: any[];
 }
@@ -202,8 +202,8 @@ export default function MissionControlClient({ stats }: { stats: Stats }) {
                     <span className="text-[#d4c4aa]">{stats.totalMasteries}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-[var(--muted)]">Cascade Paid</span>
-                    <span className="text-[#d4c4aa]">${stats.totalCascadePaid.toFixed(2)}</span>
+                    <span className="text-[var(--muted)]">Shares paid</span>
+                    <span className="text-[#d4c4aa]">${stats.totalSharesPaid.toFixed(2)}</span>
                   </div>
                 </div>
 
@@ -319,7 +319,7 @@ export default function MissionControlClient({ stats }: { stats: Stats }) {
 
             {stats.flightBees.length === 0 ? (
               <Card>
-                <EmptySlate msg="No bees in First Flight right now. Aug 21 — 0700 Eastern." />
+                <EmptySlate msg="No bees in First Flight right now." />
                 <div className="text-center mt-4 font-cormorant italic text-[rgba(201,168,76,0.5)] text-lg">
                   When the first bee enters, you'll watch it fly here — step by step.
                 </div>

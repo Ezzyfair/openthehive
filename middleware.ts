@@ -21,7 +21,7 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 import { isSessionCookie, memberCookieOptions } from '@/lib/member-session';
 
-export const config = { matcher: ['/member/:path*', '/api/member/:path*'] };
+export const config = { matcher: ['/member/:path*', '/api/member/:path*', '/mission-control/:path*'] };
 
 export async function middleware(req: NextRequest): Promise<NextResponse> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

@@ -1,8 +1,35 @@
 export const dynamic = "force-dynamic";
+import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import MissionControlClient from '@/components/MissionControlClient';
+import { createReadOnlySessionClient } from '@/lib/supabase/server';
+import { missionControlAllowed } from '@/lib/mission-control-access';
+
+// MISSION-CONTROL-001 — not for search engines either.
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 const DREAMERS_CHAMBER_ID = 'a6b07aa8-53bc-474b-8078-e30ee73c8ecd';
+
+/**
+ * MISSION-CONTROL-001 item 2 — the lock. Runs before anything is read.
+ *
+ * The same read-only session client and the same getUser() the member page uses;
+ * identity is never taken from the cookie alone. An error, no user, no email, or an
+ * email not on MISSION_CONTROL_EMAILS all get the same 404: a signed-in member who is
+ * not allowed sees exactly what a signed-out visitor sees. No setting means nobody.
+ */
+async function requireMissionControlCaller(): Promise<void> {
+  let allowed = false;
+  try {
+    const supabase = createReadOnlySessionClient();
+    const { data, error } = await supabase.auth.getUser();
+    allowed = !error && missionControlAllowed(data?.user?.email, process.env.MISSION_CONTROL_EMAILS);
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) notFound();
+}
 
 function getSupabase() {
   return createClient(
@@ -276,7 +303,7 @@ async function getStats() {
     ),
 
     // Revenue
-    totalCascadePaid: (recentEarnings.data || []).reduce((s: number, e: any) => s + (e.amount || 0), 0),
+    totalSharesPaid: (recentEarnings.data || []).reduce((s: number, e: any) => s + (e.amount || 0), 0),
 
     // System health
     systemHealth: {
@@ -294,6 +321,7 @@ async function getStats() {
 }
 
 export default async function MissionControlPage() {
+  await requireMissionControlCaller();
   const stats = await getStats();
   return <MissionControlClient stats={stats} />;
 }
