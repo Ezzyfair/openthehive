@@ -9,7 +9,8 @@
  *
  * Used by:
  *   - /api/referrals (GET earnings dashboard)
- *   - /api/referrals/chain (GET chain and GET ?action=earnings; its POST is 410)
+ *   - /api/referrals/chain: no longer. Its POST is 410 (NIK-RAIL-000) and its GET is
+ *     410 since REFERRALS-CHAIN-001 (Nov 16, 2026); it imports nothing from here.
  *   - /api/stripe/webhook, through lib/rail/accrual.ts, for buildReferralChain only
  *
  * Bible v1.3 (Sept 6, 2026): the referral bonus is 2 levels — L1 20%, L2 10% — of every paid
