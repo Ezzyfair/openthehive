@@ -5,24 +5,33 @@ export const dynamic = 'force-dynamic';
 // railAdmin()'s cache:'no-store' is the first belt, these are the second.
 export const fetchCache = 'force-no-store';
 export const revalidate = 0;
-import { NextRequest, NextResponse } from 'next/server';
+// POST /api/stripe/portal opens a Stripe billing-portal session.
+//
+// This route used to read a Stripe customer id from the request body and open a
+// billing portal for whatever id it was given; a GET beside it answered a status
+// line to anyone. It identified nobody, so anyone holding or guessing a customer
+// id could open that customer's billing portal. STRIPE-PORTAL-001 closed it on
+// Nov 17, 2026: the request is no longer read at all. The signed-in member's
+// session (resolveMemberSession) says who is asking, and that member's own
+// members row says which Stripe customer the portal opens for. The logic, and the
+// order it runs in, is in lib/rail/portal.ts.
+import { resolveMemberSession } from '@/lib/antenna/member';
+import { railAdmin } from '@/lib/rail/db';
+import { openMemberPortal } from '@/lib/rail/portal';
 import { railStripe } from '@/lib/rail/stripe';
 
-export async function POST(req: NextRequest) {
-  try {
-    const stripe = railStripe();
-    const { customerId } = await req.json();
-    if (!customerId) return NextResponse.json({ error: 'No customer ID' }, { status: 400 });
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: 'https://openthehive.ai/account',
-    });
-    return NextResponse.json({ url: session.url });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
-  }
-}
-
-export async function GET() {
-  return NextResponse.json({ status: 'Stripe portal active' });
+export async function POST() {
+  return openMemberPortal({
+    session: () => resolveMemberSession(),
+    memberRow: async (memberId) => {
+      const { data, error } = await railAdmin()
+        .from('members')
+        .select('stripe_customer_id')
+        .eq('id', memberId)
+        .maybeSingle();
+      if (error) throw new Error(`members read failed: ${error.message}`);
+      return data as { stripe_customer_id: string | null } | null;
+    },
+    stripe: railStripe,
+  });
 }
