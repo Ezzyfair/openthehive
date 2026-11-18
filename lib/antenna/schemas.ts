@@ -71,6 +71,16 @@ export const mailSendSchema: Schema = {
   body_text: { kind: 'string', minLen: 1, maxLen: 1_000_000 },
 };
 
+/**
+ * ANTENNA-007 — POST /api/bee/rooms/<honeycomb_id>/post. Closed. The shape only:
+ * the 16 KB cap is applied later, with replySchema itself, after the room and the
+ * day's limit are checked (the ticket's order), so an oversize post answers exactly
+ * as /reply does. This bound only keeps an absurd body from reaching that code.
+ */
+export const roomPostSchema: Schema = {
+  content: { kind: 'string', minLen: 1, maxLen: 1_000_000 },
+};
+
 /** §5.3 reply cap: over 16384 is 413, not 400. */
 export const REPLY_CONTENT_MAX = 16384;
 

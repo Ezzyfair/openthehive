@@ -29,7 +29,10 @@ export type BeeEvent =
   | 'unsent_replies'
   // ANTENNA-006 — migration 20261112_bee_mail.sql widens the CHECK for these two.
   | 'mail_sent'
-  | 'mail_refused';
+  | 'mail_refused'
+  // ANTENNA-007 — migration 20261114_rooms.sql widens the CHECK for these two.
+  | 'room_post'
+  | 'room_choice';
 
 /**
  * The slice of the Supabase client these writers use. Declared so the self-test

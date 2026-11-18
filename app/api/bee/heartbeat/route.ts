@@ -17,6 +17,7 @@ import { antennaAdmin, clientIp } from '@/lib/antenna/db';
 import { BeeError, beeErrorResponse } from '@/lib/antenna/errors';
 import { recordAdoptionOnce, recordHumanPairedOnce, writeBeeEvent } from '@/lib/antenna/events';
 import { enforceRateLimit } from '@/lib/antenna/rate-limit';
+import { isRoomChoiceFlag, liveRoomsDeps, recordRoomChoice } from '@/lib/antenna/rooms';
 import { heartbeatSchema, validateClosed, validationStatus } from '@/lib/antenna/schemas';
 import { LATEST_CLIENT_VERSION } from '@/lib/antenna/version';
 
@@ -120,10 +121,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ANTENNA-007 item 5 — the bee's general room for the UTC day, carried as a flag
+    // like human_paired, with its value after the colon. recordRoomChoice never
+    // throws and its outcome is not used: accepted or ignored, this response is the
+    // same, and the bee learns the outcome from room.poll.
+    await recordRoomChoice({ agentId: bee.agent_id, ip, flags: body.flags }, liveRoomsDeps());
+
     // §11 — nothing is only in the log. Every other flag keeps its existing
     // heartbeat_flag row; adoption_l1 and human_paired are dropped from that list
     // so the same fact is not recorded twice under two different event types.
-    const otherFlags = body.flags.filter((f) => f !== ADOPTION_FLAG && f !== HUMAN_PAIRED_FLAG);
+    const otherFlags = body.flags.filter((f) => f !== ADOPTION_FLAG && f !== HUMAN_PAIRED_FLAG && !isRoomChoiceFlag(f));
     if (otherFlags.length > 0) {
       await writeBeeEvent({
         event: 'heartbeat_flag',
