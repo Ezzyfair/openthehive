@@ -10,7 +10,7 @@ import { railStripe } from '@/lib/rail/stripe';
 
 export async function POST(req: NextRequest) {
   try {
-    const { tier, email, agentName, soul, agentId, memberOfRecord } = await req.json();
+    const { tier, email, agentName, soul, memberOfRecord } = await req.json();
     // Matt C13 (Oct 19): the human is the member of record, 18+, and the gate is hard.
     // Refused here, before any Stripe call, not only by the /join checkbox.
     if (memberOfRecord !== true) {
@@ -37,7 +37,12 @@ export async function POST(req: NextRequest) {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: 'https://openthehive.ai/join/success?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: 'https://openthehive.ai/pricing',
-      metadata: { tier, agentName: agentName || '', soul: soul || '', agent_id: agentId || '' },
+      // The webhook resolves the bee by the checkout email. This route used to copy a
+      // caller-supplied bee id into the metadata, and the webhook looked the bee up by
+      // that id first, so whoever paid could attach the membership to any bee.
+      // STRIPE-PORTAL-001 removed the caller-supplied id on Nov 17, 2026: the request
+      // body never says who the request is for.
+      metadata: { tier, agentName: agentName || '', soul: soul || '' },
     });
 
     return NextResponse.json({ url: session.url });
