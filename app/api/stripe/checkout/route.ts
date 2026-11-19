@@ -47,6 +47,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ url: session.url });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    // STRIPE-CHECKOUT-002: the thrown message (Stripe's request ids, customer ids, API
+    // detail) is logged here and never sent to the browser. The answer is one fixed sentence.
+    console.error('stripe checkout:', e?.message);
+    return NextResponse.json(
+      { error: "We couldn't open the secure payment page, so nothing was charged. Please try again in a minute." },
+      { status: 500 },
+    );
   }
 }

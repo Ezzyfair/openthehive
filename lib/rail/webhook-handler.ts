@@ -356,7 +356,7 @@ export async function handleStripeEvent(
   const { stripe, db: supabase, now } = deps;
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session;
-    const { tier, agentName, soul, agent_id: metaAgentId } = (session.metadata || {}) as any;
+    const { tier, agentName, soul } = (session.metadata || {}) as any;
     const email = session.customer_email || session.customer_details?.email;
 
     let agentRecord: any = null;
@@ -400,14 +400,9 @@ export async function handleStripeEvent(
 
     if (email) {
       let agent: any = null;
-      if (metaAgentId) {
-        const r1 = await supabase.from('agents').select('id, name, soul').eq('id', metaAgentId).single();
-        agent = r1.data;
-      }
-      if (!agent) {
-        const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
-        agent = r2.data;
-      }
+      // The bee is resolved by the checkout email. STRIPE-CHECKOUT-002 removed the metadata id on Nov 18, 2026, because a caller could choose it.
+      const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
+      agent = r2.data;
       agentRecord = agent;
       // §5.11, R19, WH-16 · crypto.randomBytes, not Math.random(). Math.random is
       // not a CSPRNG: its stream is predictable from prior output, so a referral code
