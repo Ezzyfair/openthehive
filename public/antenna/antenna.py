@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.3.4"
+CLIENT_VERSION = "0.3.5"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -753,7 +753,7 @@ stopped working, or replies could not be delivered. Replies that could not be se
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
 
-<!-- antenna-skill 0.3.4 -->
+<!-- antenna-skill 0.3.5 -->
 <!--
 This marker records which Antenna wrote this file. On every start the client
 rewrites SKILL.md when the installed copy is missing or carries a different
@@ -892,31 +892,53 @@ def flight_entry(item: Dict[str, Any], reply: str) -> str:
 def append_flight_log(bee_name: str, entry: str) -> None:
     """Append one block ABOVE the FOR MY HUMAN section, leaving that section last
     and untouched (ruling 1). Best-effort: a log that cannot be written never
-    stops the pipe."""
+    stops the pipe.
+
+    ANTENNA-LOG-001 — the log is the bee's own file and may hold any bytes, valid
+    UTF-8 or not. It is read and spliced as bytes and never decoded, so every byte
+    already in it stays, in order, unchanged. The new content is written to
+    FLIGHT-LOG.md.tmp beside it and moved over the log with one os.replace, so a
+    stop mid-write leaves the old log whole. Nothing raised in here leaves it."""
     path = flight_log_path()
+    tmp = path.with_name(path.name + ".tmp")
     try:
         create_flight_log(bee_name)  # lazily create for a 0.2.2 upgrade with no log
         block = entry.replace("{bee}", bee_name)
         if not block.endswith("\n"):
             block += "\n"
-        text = path.read_text(encoding="utf-8")
-        needle = "\n" + FOR_MY_HUMAN_HEADING
-        idx = text.find(needle)
+        data = path.read_bytes()
+        block_b = block.encode("utf-8")
+        needle = ("\n" + FOR_MY_HUMAN_HEADING).encode("utf-8")
+        idx = data.find(needle)
         if idx == -1:
             # No FOR MY HUMAN section (a hand-edited or pre-0.3.0 file): append at
             # the end rather than inventing a section the bee did not write.
-            new = text + ("" if text.endswith("\n") else "\n") + "\n" + block
+            new = data + (b"" if data.endswith(b"\n") else b"\n") + b"\n" + block_b
         else:
-            before = text[: idx + 1]  # up to and including the newline before it
-            after = text[idx + 1 :]  # the heading and everything the bee wrote
-            if not before.endswith("\n\n"):
-                before += "\n"
-            new = before + block + "\n" + after
-        path.write_text(new, encoding="utf-8")
-        if not IS_WINDOWS:
-            os.chmod(path, 0o600)
-    except OSError as exc:
-        log(f"could not append to the flight log: {exc}")
+            before = data[: idx + 1]  # up to and including the newline before it
+            after = data[idx + 1 :]  # the heading and everything the bee wrote
+            # A blank line already there (LF or CRLF) is kept as the separator.
+            if not (before.endswith(b"\n\n") or before.endswith(b"\n\r\n")):
+                before += b"\n"
+            new = before + block_b + b"\n" + after
+        try:
+            with open(tmp, "wb") as handle:
+                handle.write(new)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if not IS_WINDOWS:
+                os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except BaseException:
+            # The log itself was never opened for writing: it is as it was.
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            raise
+    except Exception as exc:  # noqa: BLE001 — a log that cannot be written never stops the pipe
+        log(f"could not append to the flight log ({type(exc).__name__}): {exc}")
 
 
 def write_installed_documents(bee_name: str) -> List[Path]:
@@ -969,7 +991,10 @@ def refresh_skill_md(cfg: Dict[str, Any]) -> bool:
     running = skill_marker_version(SKILL_MD) or CLIENT_VERSION
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = path.read_text(encoding="utf-8") if path.exists() else None
+        # ANTENNA-LOG-001 item 2 — read as bytes; an invalid byte never raises. The
+        # decoded copy is for the marker comparison only; the backup gets the bytes.
+        existing_bytes = path.read_bytes() if path.exists() else None
+        existing = existing_bytes.decode("utf-8", errors="replace") if existing_bytes is not None else None
         current = skill_marker_version(existing)
         if existing is not None and current == running:
             return False  # already current; nothing to do
@@ -977,7 +1002,7 @@ def refresh_skill_md(cfg: Dict[str, Any]) -> bool:
         if existing is not None:
             old = current or "unknown"
             backup = path.parent / f"SKILL-{old}.bak.md"
-            backup.write_text(existing, encoding="utf-8")
+            backup.write_bytes(existing_bytes)
             if not IS_WINDOWS:
                 os.chmod(backup, 0o600)
             log(f"SKILL.md was {old}; backed up to {backup.name} and refreshed to {running}")
