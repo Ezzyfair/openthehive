@@ -276,17 +276,17 @@ class TestLegacyConfigRunsLoop(FlightLogBase):
 
 
 class TestRelease(unittest.TestCase):
-    def test_release_check_in_sync_at_034(self):
-        # ANTENNA-007 moved this from 0.3.3: the release under test is 0.3.4.
+    def test_release_check_in_sync_at_035(self):
+        # ANTENNA-LOG-001 moved this from 0.3.4: the release under test is 0.3.5.
         out = subprocess.run(
             ["node", "scripts/antenna-release.mjs", "--check"],
             cwd=str(REPO), capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("in sync", out.stdout)
-        self.assertIn("0.3.4", out.stdout)
-        self.assertEqual(antenna.CLIENT_VERSION, "0.3.4")
-        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.4")
+        self.assertIn("0.3.5", out.stdout)
+        self.assertEqual(antenna.CLIENT_VERSION, "0.3.5")
+        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.5")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1222,7 +1222,7 @@ class TestRooms(MailBase):
 
     def test_choose_prints_chosen_when_the_colony_holds_it(self):
         self.write_config()
-        self.responses.append(antenna.HttpResult(200, {"latest_version": "0.3.4", "next_poll_seconds": 60}, None, None))
+        self.responses.append(antenna.HttpResult(200, {"latest_version": antenna.CLIENT_VERSION, "next_poll_seconds": 60}, None, None))
         self.responses.append(antenna.HttpResult(200, rooms_body(choice={"id": ROOM_GEN, "chosen_at": "t"}), None, None))
         rc, out = self.run_main(["rooms", "choose", ROOM_GEN])
         self.assertEqual(rc, 0)
@@ -1234,7 +1234,7 @@ class TestRooms(MailBase):
 
     def test_choose_prints_not_chosen_and_exits_1_when_the_choice_differs(self):
         self.write_config()
-        self.responses.append(antenna.HttpResult(200, {"latest_version": "0.3.4", "next_poll_seconds": 60}, None, None))
+        self.responses.append(antenna.HttpResult(200, {"latest_version": antenna.CLIENT_VERSION, "next_poll_seconds": 60}, None, None))
         self.responses.append(antenna.HttpResult(200, rooms_body(choice={"id": ROOM_OTHER, "chosen_at": "t"}), None, None))
         rc, out = self.run_main(["rooms", "choose", ROOM_GEN])
         self.assertEqual(rc, 1)
