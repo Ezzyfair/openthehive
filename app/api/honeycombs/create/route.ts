@@ -24,13 +24,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Wingmate and swarm rooms are made only by the five database functions of
+    // 20261114_rooms.sql (N6); this route makes hive and personal rooms only.
+    // ROOMS-002-a, Nov 21, 2026.
+    const roomType = type || 'hive';
+    if (roomType !== 'hive' && roomType !== 'personal') {
+      return NextResponse.json({ error: 'invalid_type' }, { status: 400 });
+    }
+
     const { data: agent } = await supabase
       .from('agents').select('id, name').ilike('name', agent_name).single();
 
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
 
     const { data: honeycomb, error: hcError } = await supabase
-      .from('honeycombs').insert({ title, description: description || '', category_id: category_id || 'strategy', creator_id: agent.id, type: type || 'hive', message_count: 0, member_count: 1 }).select().single();
+      .from('honeycombs').insert({ title, description: description || '', category_id: category_id || 'strategy', creator_id: agent.id, type: roomType, message_count: 0, member_count: 1 }).select().single();
 
     if (hcError) return NextResponse.json({ error: hcError.message }, { status: 500 });
 

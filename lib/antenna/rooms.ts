@@ -20,6 +20,7 @@ import { chamberProvenance } from './chamber';
 import { antennaAdmin } from './db';
 import { BeeError } from './errors';
 import { writeBeeEvent, type BeeEventInput } from './events';
+import type { EventsAdmin } from './events';
 import { firstPatternMatch, MAIL_BASE_PATTERNS, parseMailCursor, redactPatterns } from './mail';
 import { enforceRateLimit, type EnforceInput } from './rate-limit';
 import {
@@ -84,7 +85,7 @@ export interface RoomsDeps {
   hiveActiveRooms(): Promise<HoneycombRow[]>;
   /** This agent's room_choice rows in [since, until), oldest first. Throws on failure. */
   roomChoiceRows(agentId: string, sinceIso: string, untilIso: string): Promise<RoomChoiceRow[]>;
-  /** This agent's room_post rows for one honeycomb in [since, until). Throws on failure. */
+  /** This agent's messages in one honeycomb with created_at in [since, until). Throws on failure. */
   countRoomPosts(agentId: string, honeycombId: string, sinceIso: string, untilIso: string): Promise<number>;
   /**
    * Messages in these rooms with created_at strictly after `afterIso`, oldest first,
@@ -417,7 +418,7 @@ export async function roomPost(
   // /reply's bookkeeping is inline in its route (last_activity_at only); copied here.
   await deps.touchHoneycomb(room.id, now.toISOString());
 
-  // 8 · the audit row the day's count reads.
+  // 8 · the room_post audit row. The day's count reads messages, not this row (ROOMS-002-a).
   await deps.writeEvent({
     event: 'room_post',
     agentId: caller.agentId,
@@ -435,6 +436,30 @@ const HONEYCOMB_COLS = 'id, title, description, type, status';
 function dbFail(what: string, message: string): BeeError {
   console.error(`antenna: rooms ${what} failed`, message);
   return new BeeError(500, 'internal_error', `${what} failed`);
+}
+
+/**
+ * ROOMS-002-a (NIK-ANTENNA-007 M2): the day's post count, read from the posts
+ * themselves. This agent's messages in one honeycomb with created_at in
+ * [since, until), whatever road wrote them. No moderation_status filter: a post
+ * hidden later still used one of that day's posts. An error or a null count throws.
+ */
+export async function countRoomMessages(
+  admin: EventsAdmin,
+  agentId: string,
+  honeycombId: string,
+  sinceIso: string,
+  untilIso: string,
+): Promise<number> {
+  const { count, error } = await admin
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('agent_id', agentId)
+    .eq('honeycomb_id', honeycombId)
+    .gte('created_at', sinceIso)
+    .lt('created_at', untilIso);
+  if (error || count === null) throw new Error(error?.message ?? 'no count returned');
+  return count;
 }
 
 export function liveRoomsDeps(): RoomsDeps {
@@ -480,18 +505,8 @@ export function liveRoomsDeps(): RoomsDeps {
         honeycomb_id: typeof r.detail_json?.honeycomb_id === 'string' ? r.detail_json.honeycomb_id : null,
       }));
     },
-    countRoomPosts: async (agentId, honeycombId, sinceIso, untilIso) => {
-      const { count, error } = await antennaAdmin()
-        .from('bee_client_events')
-        .select('id', { count: 'exact', head: true })
-        .eq('event', 'room_post')
-        .eq('agent_id', agentId)
-        .eq('detail_json->>honeycomb_id', honeycombId)
-        .gte('at', sinceIso)
-        .lt('at', untilIso);
-      if (error || count === null) throw new Error(error?.message ?? 'no count returned');
-      return count;
-    },
+    countRoomPosts: async (agentId, honeycombId, sinceIso, untilIso) =>
+      countRoomMessages(antennaAdmin(), agentId, honeycombId, sinceIso, untilIso),
     readPosts: async ({ roomIds, afterIso, agentId, limit }) => {
       if (roomIds.length === 0) return [];
       const { data, error } = await antennaAdmin()
