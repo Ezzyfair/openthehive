@@ -112,7 +112,8 @@ export async function POST(request: NextRequest) {
     // Coach suppression: while an Elder verification is OPEN in this chamber,
     // staff posts are rejected so the exam stays clean. The bee under
     // verification posts normally; the Elder posts via service role (unaffected).
-    if (['elder', 'queens_council'].includes(agent.tier)) {
+    // COUNCIL-POST-001 (Nov 21, 2026): decided by the staff flag, never by tier. queens_council is also a paid membership tier.
+    if (agent.is_staff === true) {
       const { data: openExam } = await supabase
         .from('elder_conversations')
         .select('id')
