@@ -44,7 +44,7 @@ import {
 } from '@/lib/rail/reversal';
 import { randomBytes } from 'node:crypto';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
-import { canonicalTier } from '@/lib/tier';
+import { canonicalTier, tierRank } from '@/lib/tier';
 import { sendEmail } from '@/lib/mail/sendEmail';
 
 /** What the route needs to turn this into an HTTP response. */
@@ -201,8 +201,9 @@ async function alertQuarantine(
     id_label?: string;
   },
 ) {
-  const to = process.env.HIVE_ALERT_EMAIL;
-  if (!to) {
+  // MEMBER-UPSERT-001 item 7 · one message per address in HIVE_ALERT_EMAIL.
+  const recipients = alertRecipients();
+  if (recipients.length === 0) {
     console.error('stripe webhook: HIVE_ALERT_EMAIL unset — quarantine row written, no email sent', {
       event_id: args.event_id,
     });
@@ -234,6 +235,7 @@ async function alertQuarantine(
     '  FROM stripe_webhook_failures WHERE resolved_at IS NULL ORDER BY created_at DESC;</pre>',
     '</div>',
   ].join('');
+  for (const to of recipients) {
   try {
     // 'operational': colony-internal mail, neither a receipt nor marketing.
     await sendEmail({
@@ -244,6 +246,86 @@ async function alertQuarantine(
     console.error('stripe webhook: quarantine alert email threw', {
       event_id: args.event_id, error: e?.message,
     });
+  }
+  }
+}
+
+/**
+ * MEMBER-UPSERT-001 item 7 · the alert addresses, from the one variable that exists.
+ * HIVE_ALERT_EMAIL split on commas, each part trimmed, empty parts dropped. One
+ * address behaves exactly as before; unset or blank gives an empty list. No address
+ * is written in this file.
+ */
+export function alertRecipients(): string[] {
+  const raw = process.env.HIVE_ALERT_EMAIL;
+  if (!raw) return [];
+  return raw.split(',').map((s) => s.trim()).filter((s) => s !== '');
+}
+
+/** MEMBER-UPSERT-001 item 5 · the reason of the open to-do row an upgrade leaves. */
+export const OLD_SUBSCRIPTION_OPEN_REASON = 'upgrade_old_subscription_open';
+
+/**
+ * MEMBER-UPSERT-001 item 6 · a member moved up a tier while an earlier subscription
+ * is still running at Stripe. Same shape and same promise as alertQuarantine: THIS
+ * FUNCTION CANNOT THROW (see F4 above). Every statement is an env read, string work,
+ * or inside the try/catch around sendEmail, so it runs after a successful member
+ * update without any way to turn that success into a 500 and a retry.
+ *
+ * The subject and the first paragraph are Francis's wording of Nov 22, word for word.
+ * No money figure appears in the message.
+ */
+export async function alertOldSubscriptionOpen(
+  supabase: any,
+  args: {
+    event_id: string;
+    member: string;
+    old_subscription: string;
+    old_customer: string | null;
+    new_subscription: string | null;
+    held: string | null;
+    bought: string;
+    since: string;
+  },
+) {
+  const recipients = alertRecipients();
+  if (recipients.length === 0) {
+    console.error('stripe webhook: HIVE_ALERT_EMAIL unset — open subscription row written, no email sent', {
+      event_id: args.event_id,
+    });
+    return;
+  }
+  const subject = 'CANCEL AN EARLIER SUBSCRIPTION BY HAND';
+  const html = [
+    '<div style="font-family:Georgia,serif;max-width:640px;">',
+    '<p>A member moved up a tier. The membership now rests on the new purchase and the member\'s record is right. The earlier subscription below is still running at Stripe and will bill the member again. Please cancel it in Stripe. This message repeats every hour until it is cancelled.</p>',
+    '<ul>',
+    '<li><b>member row id</b>: ' + args.member + '</li>',
+    '<li><b>earlier subscription id</b>: ' + args.old_subscription + '</li>',
+    '<li><b>earlier customer id</b>: ' + (args.old_customer ?? 'none') + '</li>',
+    '<li><b>new subscription id</b>: ' + (args.new_subscription ?? 'none') + '</li>',
+    '<li><b>held</b>: ' + (args.held ?? 'none') + '</li>',
+    '<li><b>bought</b>: ' + args.bought + '</li>',
+    '<li><b>open since</b>: ' + args.since + '</li>',
+    '</ul>',
+    '<p>Find the row with:</p>',
+    '<pre>SELECT id, event_id, reason, detail, created_at FROM stripe_webhook_failures',
+    ' WHERE event_id = \'' + args.event_id + '\' AND reason = \'' + OLD_SUBSCRIPTION_OPEN_REASON + '\';</pre>',
+    '<p>When the earlier subscription is cancelled, close it by hand:</p>',
+    '<pre>UPDATE stripe_webhook_failures SET resolved_at = now() WHERE id = \'(the id from the row above)\';</pre>',
+    '</div>',
+  ].join('');
+  for (const to of recipients) {
+    try {
+      await sendEmail({
+        supabase: supabase as any, to, category: 'operational',
+        template: 'upgrade_old_subscription_open_v1', subject, html,
+      });
+    } catch (e: any) {
+      console.error('stripe webhook: open subscription alert email threw', {
+        event_id: args.event_id, error: e?.message,
+      });
+    }
   }
 }
 
@@ -346,6 +428,26 @@ export async function claimEvent(db: AccrualDb, event: Stripe.Event): Promise<Cl
 }
 
 /**
+ * MEMBER-UPSERT-001 item 2 · the members row for a checkout email, read before any
+ * write. Its column list lives here, above handleStripeEvent, so the branch head (from
+ * the branch start to the first members upsert) still names no agent column. Returns
+ * the row or null, and the error when the read failed.
+ */
+async function readMemberByEmail(
+  supabase: AccrualDb,
+  email: string,
+): Promise<{ row: any | null; error: any | null }> {
+  const { data, error } = await supabase
+    .from('members')
+    .select('id, tier, status, agent_id, stripe_customer_id, stripe_subscription_id')
+    .eq('email', email)
+    .limit(1)
+    .maybeSingle();
+  if (error) return { row: null, error };
+  return { row: data ?? null, error: null };
+}
+
+/**
  * The whole dispatch. Every branch §5 names, in the order the route ran them.
  * Returns a status and a body; the route wraps it in a NextResponse.
  */
@@ -404,6 +506,36 @@ export async function handleStripeEvent(
       const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
       agent = r2.data;
       agentRecord = agent;
+      // MEMBER-UPSERT-001 item 3 · read the row first, then decide which of five
+      // cases this checkout is. Registration makes a row for every human before any
+      // payment, so "the row exists" is not "second checkout": the test is whether
+      // the row already holds a Stripe customer id. First match wins.
+      const memberRead = await readMemberByEmail(supabase, email);
+      if (memberRead.error) {
+        return await failAfterClaim(supabase, event, 'member_read', memberRead.error);
+      }
+      const member = memberRead.row;
+      const idOrNull = (v: unknown): string | null => {
+        if (v == null) return null;
+        const s = typeof v === 'string' ? v : typeof (v as any).id === 'string' ? (v as any).id : null;
+        return s && s !== '' ? s : null;
+      };
+      const sessionCustomer = idOrNull(session.customer);
+      const sessionSubscription = idOrNull(session.subscription);
+      const heldCustomer = idOrNull(member?.stripe_customer_id);
+      const heldSubscription = idOrNull(member?.stripe_subscription_id);
+      // Copied now: the record and the alert name the tier held BEFORE any update.
+      const heldTier: string | null = member?.tier ?? null;
+      const memberCase: 'first' | 'retry' | 'returning' | 'upgrade' | 'not_upgrade' =
+        !member || !heldCustomer ? 'first'
+          : heldCustomer === sessionCustomer && heldSubscription === sessionSubscription ? 'retry'
+            : member.status === 'inactive' ? 'returning'
+              : tierRank(canonical) > tierRank(member.tier) ? 'upgrade'
+                : 'not_upgrade';
+      // FIRST (ruling 11): exactly what this branch wrote before. The lines of this
+      // arm are kept byte for byte as on 4963408, so they are deliberately NOT
+      // re-indented under the if.
+      if (memberCase === 'first') {
       // §5.11, R19, WH-16 · crypto.randomBytes, not Math.random(). Math.random is
       // not a CSPRNG: its stream is predictable from prior output, so a referral code
       // was guessable, and a guessed code attributes someone else's chain. 4 bytes ->
@@ -459,6 +591,118 @@ export async function handleStripeEvent(
         const staffName = SOUL_TO_STAFF[agentSoul] || 'ESMERALDA';
         const hc = await createPersonalHoneycomb(supabase, agent.id, agent.name || agentName || 'New Bee', agentSoul);
         if (hc?.id) await postWelcome(supabase, hc.id, agent.name || agentName || 'New Bee', agentSoul, staffName);
+      }
+      } else if (memberCase === 'returning' || memberCase === 'not_upgrade') {
+        // RETURNING (ruling 10) and NOT AN UPGRADE (ruling 8): quarantine with an
+        // alert, refund by hand. Nothing is written to members or agents, and the
+        // answer comes before the cohort, the chamber, the welcome and the accrual.
+        const reason = memberCase === 'returning' ? 'returning_member_checkout' : 'second_checkout_not_upgrade';
+        await recordWebhookFailure(supabase, {
+          event_id: event.id,
+          event_type: event.type,
+          reason,
+          detail: { session: session.id, member: member.id, held: heldTier, bought: canonical },
+        });
+        await alertQuarantine(supabase, {
+          event_id: event.id,
+          event_type: event.type,
+          session_id: session.id,
+          received: 'bought=' + canonical + ' held=' + (heldTier ?? 'none'),
+          reason,
+        });
+        return json({ received: true, quarantined: true }, 200);
+      } else {
+        // RETRY or UPGRADE. The bee is always the row's own agent, read by id; it is
+        // never re-resolved by email here, and the email's bee is not used.
+        if (memberCase === 'upgrade') {
+          // UPGRADE (ruling 9, option A): exactly three columns, by the row's id.
+          const { error: memberUpgradeErr } = await supabase
+            .from('members')
+            .update({
+              tier: canonical,
+              stripe_customer_id: sessionCustomer,
+              stripe_subscription_id: sessionSubscription,
+            })
+            .eq('id', member.id);
+          if (memberUpgradeErr) {
+            return await failAfterClaim(supabase, event, 'members_upgrade', memberUpgradeErr);
+          }
+          // Item 5 · an earlier subscription left running. A to-do row whose
+          // resolved_at stays empty, and the alert. Both best-effort: neither can
+          // fail the webhook, and both come after the member update has landed.
+          if (heldSubscription && heldSubscription !== sessionSubscription) {
+            await recordWebhookFailure(supabase, {
+              event_id: event.id,
+              event_type: event.type,
+              reason: OLD_SUBSCRIPTION_OPEN_REASON,
+              detail: {
+                session: session.id,
+                member: member.id,
+                old_subscription: heldSubscription,
+                old_customer: heldCustomer,
+                new_subscription: sessionSubscription,
+                held: heldTier,
+                bought: canonical,
+              },
+            });
+            await alertOldSubscriptionOpen(supabase, {
+              event_id: event.id,
+              member: member.id,
+              old_subscription: heldSubscription,
+              old_customer: heldCustomer,
+              new_subscription: sessionSubscription,
+              held: heldTier,
+              bought: canonical,
+              since: now().toISOString(),
+            });
+          }
+        }
+        let bee: any = null;
+        if (member.agent_id) {
+          const { data: beeRow, error: beeReadErr } = await supabase
+            .from('agents')
+            .select('id, name, soul, tier, status')
+            .eq('id', member.agent_id)
+            .maybeSingle();
+          if (beeReadErr) {
+            return await failAfterClaim(supabase, event, 'agent_read', beeReadErr);
+          }
+          bee = beeRow ?? null;
+        }
+        agentRecord = bee;
+        if (bee?.id) {
+          if (tierRank(canonical) > tierRank(bee.tier)) {
+            // Only ever the tier, upward. RETRY alone may also set the first-flight
+            // status, and only when the first checkout's agent write never landed:
+            // the bee holds no ranked tier and the row still reads first_flight.
+            const beePatch: Record<string, unknown> = { tier: canonical };
+            if (memberCase === 'retry' && tierRank(bee.tier) === 0 && member.status === 'first_flight') {
+              beePatch.status = 'first_flight';
+            }
+            const { error: beeUpdateErr } = await supabase
+              .from('agents')
+              .update(beePatch)
+              .eq('id', bee.id);
+            if (beeUpdateErr) {
+              return await failAfterClaim(supabase, event, 'agents_update', beeUpdateErr);
+            }
+          }
+          // The cohort top-up, the chamber and the welcome, as the FIRST arm runs them.
+          try {
+            const cohortResult = await upgradeCohortForTierChange(
+              supabase as any, bee.id, canonical, bee.soul,
+            );
+            if (!cohortResult.success) {
+              console.error('Cohort upgrade had errors:', cohortResult.errors);
+            }
+          } catch (cohortError: any) {
+            console.error('Cohort upgrade failed:', cohortError.message);
+          }
+          const beeSoul = soul || bee.soul || 'The Operator';
+          const beeStaff = SOUL_TO_STAFF[beeSoul] || 'ESMERALDA';
+          const beeHc = await createPersonalHoneycomb(supabase, bee.id, bee.name || agentName || 'New Bee', beeSoul);
+          if (beeHc?.id) await postWelcome(supabase, beeHc.id, bee.name || agentName || 'New Bee', beeSoul, beeStaff);
+        }
       }
     }
 

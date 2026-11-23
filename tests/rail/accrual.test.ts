@@ -47,6 +47,7 @@ import {
   claimEvent,
   handleStripeEvent,
   recordWebhookFailure,
+  OLD_SUBSCRIPTION_OPEN_REASON,
   type HandlerResult,
 } from '../../lib/rail/webhook-handler';
 import {
@@ -867,7 +868,7 @@ test('(cc) charge.refunded on a one-time payment reverses against the payment in
   assert.equal(res.body.reversed, 2);
   const args: any = db.rpcCalls.find((c) => c.fn === 'rail_reverse')!.args;
   assert.equal(args.p_invoice_ref, 'pi_queens_9', 'the intent id is the ref (§5.5)');
-  assert.equal(db.failures().length, 0);
+  assert.equal(db.failures().filter((r) => r.reason !== OLD_SUBSCRIPTION_OPEN_REASON).length, 0);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1276,7 +1277,7 @@ test('(qq) F1 · a one-time payment that also made an invoice reverses on the se
   assert.equal(calls[0].args.p_invoice_ref, 'in_post_purchase_1');
   assert.equal(calls[1].args.p_invoice_ref, 'pi_invcreate_1');
   assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
-  assert.equal(db.failures().length, 0, 'nothing was quarantined');
+  assert.equal(db.failures().filter((r) => r.reason !== OLD_SUBSCRIPTION_OPEN_REASON).length, 0, 'nothing was quarantined');
 });
 
 test('(qq2) F1 · a subscription refund takes the second look too, and still finds nothing', async () => {
