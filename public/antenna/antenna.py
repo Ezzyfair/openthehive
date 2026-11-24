@@ -53,7 +53,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-CLIENT_VERSION = "0.3.5"
+CLIENT_VERSION = "0.3.6"
 DEFAULT_API_BASE = "https://www.openthehive.ai"
 
 # §4 — backoff ceiling for 5xx and network faults.
@@ -753,7 +753,7 @@ stopped working, or replies could not be delivered. Replies that could not be se
 are kept as files in `unsent/` rather than discarded. The full log is in
 `antenna.log`, but nothing important lives only in the log.
 
-<!-- antenna-skill 0.3.5 -->
+<!-- antenna-skill 0.3.6 -->
 <!--
 This marker records which Antenna wrote this file. On every start the client
 rewrites SKILL.md when the installed copy is missing or carries a different
@@ -1139,7 +1139,7 @@ class Unreachable(Exception):
 
 class InvokeError(Unreachable):
     """ANTENNA-004 item 5 — in command mode the invoke produced no usable reply:
-    a non-zero exit, an empty or whitespace-only reply, or a reply that matches a
+    a non-zero exit, or a reply that matches a
     known runtime-error signature. It is NOT posted — posting a runtime's own error
     text as the bee's words is exactly what put a timeout message into a chamber.
 
@@ -1183,6 +1183,55 @@ def invoke_error_signature(reply: str) -> Optional[str]:
     return None
 
 
+# ANTENNA-BOOT-001-b — nothing but the bee's own words reaches a chamber. A reply
+# whose last line is one of these markers means the bee has nothing to say.
+NO_REPLY_MARKERS: Tuple[str, ...] = ("NO_REPLY",)
+
+# ANTENNA-BOOT-001-b [B2] — a runtime's own error line, never the bee's words. It
+# is not posted and the item is not handed to the bee again: the line itself says
+# some tool actions may already have run.
+RUNTIME_ERROR_LINES: Tuple[str, ...] = ("Agent couldn't generate a response",)
+
+# ANTENNA-BOOT-001-b [B1, ruled Nov 22] — a reply that ends with the marker posts
+# nothing. True would remove the marker and post the rest instead.
+MARKER_TAIL_POSTS_REST = False
+
+
+def screen_reply(reply: str) -> Tuple[str, Optional[str]]:
+    """Return (text to post, reason) for one reply, in both modes.
+
+    The reason is None when the stripped reply is posted as it is; otherwise it is
+    "empty", "runtime_error", "marker_only" or "marker_stripped", and the text is
+    empty except for "marker_stripped".
+
+    A marker counts only when it stands alone on the last line (case matters);
+    repeated marker lines at the end, and blank lines between them, are all
+    dropped. A marker that is not alone on the last line (inside a sentence, or on
+    an earlier line with text after it) is left as it is.
+    """
+    stripped = reply.strip()
+    if not stripped:
+        return "", "empty"
+    head = stripped[:200].lower()
+    for line in RUNTIME_ERROR_LINES:
+        if line.lower() in head:
+            return "", "runtime_error"
+    lines = stripped.split("\n")
+    dropped = False
+    while lines and lines[-1].strip() in NO_REPLY_MARKERS:
+        lines.pop()
+        dropped = True
+        while lines and not lines[-1].strip():
+            lines.pop()
+    if not dropped:
+        return stripped, None
+    if not lines:
+        return "", "marker_only"
+    if MARKER_TAIL_POSTS_REST:
+        return "\n".join(lines).rstrip(), "marker_stripped"
+    return "", "marker_only"
+
+
 class TokenRevoked(Exception):
     """O2 — raised wherever a 401 is seen, so the loop unwinds from one place.
 
@@ -1195,8 +1244,8 @@ class TokenRevoked(Exception):
 def deliver(cfg: Dict[str, Any], item: Dict[str, Any]) -> str:
     """Hand one framed message to the agent and return its reply (may be empty).
 
-    In command mode an invoke error is silence (item 5): a non-zero exit, an empty
-    reply, or a reply matching a runtime-error signature raises InvokeError and is
+    In command mode an invoke error is silence (item 5): a non-zero exit
+    or a reply matching a runtime-error signature raises InvokeError and is
     never posted. openclaw mode is unchanged — its reply is a structured JSON field
     the runtime owns, so only a non-zero exit (Unreachable) stops it being sent.
     """
@@ -1214,6 +1263,8 @@ def deliver(cfg: Dict[str, Any], item: Dict[str, Any]) -> str:
     if mode == "command":
         if returncode != 0:
             raise InvokeError(f"exit {returncode}: {(stderr.strip() or reply)[:200]}")
+        if not reply.strip():
+            return ""
         reason = invoke_error_signature(reply)
         if reason is not None:
             raise InvokeError(f"{reason}: {reply[:200]}" if reply else reason)
@@ -1448,6 +1499,27 @@ def run_loop(cfg: Dict[str, Any]) -> int:
                 # with delivery, and a stashed reply must not re-deliver the
                 # message that produced it.
                 delivered_through = item.get("posted_at") or delivered_through
+                # ANTENNA-BOOT-001-b [B3] — the cursor is saved as soon as the bee
+                # has seen this item, before the reply is logged or posted, so a
+                # process stopped mid-page never hands it to the bee again.
+                seen = iso_to_cursor(delivered_through) if delivered_through is not None else None
+                if seen is not None and seen > int(cfg.get("cursor", 0)):
+                    cfg["cursor"] = seen
+                    try:
+                        save_config(cfg)
+                    except OSError as save_exc:
+                        log(f"could not save the cursor after {item.get('id')}: {save_exc}")
+                # ANTENNA-BOOT-001-b — one screen, both modes: only the bee's own
+                # words are logged as a reply and posted.
+                reply, why = screen_reply(reply)
+                if why == "runtime_error":
+                    invoke_errors += 1
+                    pending_flags.append(f"invoke_error:{invoke_errors}")
+                    log(f"runtime error line from the agent for {item.get('id')}; not posted, not asked again")
+                elif why == "marker_only":
+                    log(f"no-reply marker for {item.get('id')}; nothing posted")
+                elif why == "marker_stripped":
+                    log(f"no-reply marker removed from the reply to {item.get('id')}")
             except InvokeError as exc:
                 # ANTENNA-004 item 5 — an invoke error is silence. Nothing is
                 # posted; it counts toward the same unreachable budget and rides

@@ -276,17 +276,17 @@ class TestLegacyConfigRunsLoop(FlightLogBase):
 
 
 class TestRelease(unittest.TestCase):
-    def test_release_check_in_sync_at_035(self):
-        # ANTENNA-LOG-001 moved this from 0.3.4: the release under test is 0.3.5.
+    def test_release_check_in_sync_at_036(self):
+        # ANTENNA-BOOT-001-b moved this from 0.3.5: the release under test is 0.3.6.
         out = subprocess.run(
             ["node", "scripts/antenna-release.mjs", "--check"],
             cwd=str(REPO), capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("in sync", out.stdout)
-        self.assertIn("0.3.5", out.stdout)
-        self.assertEqual(antenna.CLIENT_VERSION, "0.3.5")
-        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.5")
+        self.assertIn("0.3.6", out.stdout)
+        self.assertEqual(antenna.CLIENT_VERSION, "0.3.6")
+        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.6")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -522,9 +522,9 @@ class TestInvokeError(unittest.TestCase):
             antenna._run_invoke = self._orig
 
     def test_empty_reply(self):
+        # ANTENNA-BOOT-001-b item 2: an empty reply is silence, not an error.
         self._patch_run((0, "   ", ""))
-        with self.assertRaises(antenna.InvokeError):
-            antenna.deliver(self._cfg(), {"content": "hi"})
+        self.assertEqual(antenna.deliver(self._cfg(), {"content": "hi"}), "")
 
     def test_timeout_signature(self):
         self._patch_run((0, "LLM request timed out after 30s", ""))
@@ -603,7 +603,7 @@ class TestInvokeErrorInLoop(FlightLogBase):
             return antenna.HttpResult(200, {}, None, None)
 
         antenna.request = fake_request
-        antenna._run_invoke = lambda cfg, framed: (0, "", "")  # empty -> invoke error
+        antenna._run_invoke = lambda cfg, framed: (0, "Error: boom", "")  # signature -> invoke error
 
         def fake_hb(cfg, flags):
             flags_seen["f"] = list(flags)
