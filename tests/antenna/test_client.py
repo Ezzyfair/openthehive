@@ -276,17 +276,17 @@ class TestLegacyConfigRunsLoop(FlightLogBase):
 
 
 class TestRelease(unittest.TestCase):
-    def test_release_check_in_sync_at_036(self):
-        # ANTENNA-BOOT-001-b moved this from 0.3.5: the release under test is 0.3.6.
+    def test_release_check_in_sync_at_037(self):
+        # ROOMS-002-b moved this from 0.3.6: the release under test is 0.3.7.
         out = subprocess.run(
             ["node", "scripts/antenna-release.mjs", "--check"],
             cwd=str(REPO), capture_output=True, text=True, timeout=60,
         )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("in sync", out.stdout)
-        self.assertIn("0.3.6", out.stdout)
-        self.assertEqual(antenna.CLIENT_VERSION, "0.3.6")
-        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.6")
+        self.assertIn("0.3.7", out.stdout)
+        self.assertEqual(antenna.CLIENT_VERSION, "0.3.7")
+        self.assertEqual(antenna.skill_marker_version(antenna.SKILL_MD), "0.3.7")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
