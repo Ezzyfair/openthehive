@@ -31,6 +31,20 @@ export const STRIPE_TIER_TO_CANONICAL: Record<string, CanonicalTier> = {
 };
 
 /**
+ * MEMBER-UPSERT-001 · ruling M1 (Francis, Nov 22): the order of the tiers lives here,
+ * as one list, and nowhere else. Lowest first, each CanonicalTier exactly once, in the
+ * order the type above lists them. An upgrade is a move to a later place in this
+ * list; adding a tier is one entry here beside the lines above that already need it.
+ */
+export const TIER_ORDER: readonly CanonicalTier[] = ['scout', 'worker_bee', 'honey_maker', 'queens_council'];
+
+/** The place of a tier in TIER_ORDER; 0 for null, undefined, or anything not in it. */
+export function tierRank(value: unknown): number {
+  const i = TIER_ORDER.indexOf(value as CanonicalTier);
+  return i < 0 ? 0 : i;
+}
+
+/**
  * Translate, or fail loudly. There is deliberately NO default.
  *
  * A silent fallback is what produced this defect: `tier || 'worker'` turned an
