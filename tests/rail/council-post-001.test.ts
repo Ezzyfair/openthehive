@@ -46,10 +46,25 @@ class Query {
   private filters: Array<(r: Row) => boolean> = [];
   private limitN: number | null = null;
   private insertRow: Row | null = null;
+  private selectOpts: { count?: string; head?: boolean } | null = null;
 
   constructor(private db: FakeSupabase, private seen: Seen) {}
 
-  select(_cols?: string) { this.seen.calls.push('select'); return this; }
+  select(_cols?: string, opts?: { count?: string; head?: boolean }) {
+    this.seen.calls.push('select');
+    if (opts) this.selectOpts = opts;
+    return this;
+  }
+  gte(col: string, val: any) {
+    this.seen.calls.push(`gte:${col}`);
+    this.filters.push((r) => r[col] >= val);
+    return this;
+  }
+  lt(col: string, val: any) {
+    this.seen.calls.push(`lt:${col}`);
+    this.filters.push((r) => r[col] < val);
+    return this;
+  }
   eq(col: string, val: any) {
     this.seen.calls.push(`eq:${col}`);
     this.filters.push((r) => r[col] === val);
@@ -104,6 +119,9 @@ class Query {
   }
   then(resolve: (v: any) => any, reject?: (e: any) => any) {
     this.seen.calls.push('await');
+    if (this.selectOpts && this.selectOpts.count) {
+      return Promise.resolve({ count: this.rows().length, error: null }).then(resolve, reject);
+    }
     return Promise.resolve({ data: this.rows(), error: null }).then(resolve, reject);
   }
 }
