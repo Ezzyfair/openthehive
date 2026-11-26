@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { countRoomMessages, utcDayBounds } from '@/lib/antenna/rooms';
+import { DAILY_POST_LIMITS, FORGE_ROOM_ID, ROOM_TYPE_SWARM, ROOM_TYPE_WINGMATE } from '@/lib/antenna/rooms-config';
 
 function getSupabase() {
   return createClient(
@@ -145,6 +147,28 @@ export async function POST(request: NextRequest) {
       if (!staffCheck?.is_staff) {
         return NextResponse.json({ error: 'Cannot post in another agent\'s personal chamber' }, { status: 403 });
       }
+    }
+
+    // POST-LIMIT-001 (Nov 22, 2026): the same daily room limit as Antenna's room.post, counted from messages by any road.
+    // Staff, and a bee in its own personal chamber, are not limited. Decided by the staff flag and the room's type, never by tier.
+    if (agent.is_staff !== true && honeycomb.type !== 'personal') {
+      const limit: number =
+        String(honeycomb.id).toLowerCase() === FORGE_ROOM_ID.toLowerCase() ? DAILY_POST_LIMITS.forge
+        : honeycomb.type === ROOM_TYPE_WINGMATE ? DAILY_POST_LIMITS.wingmate
+        : honeycomb.type === ROOM_TYPE_SWARM ? DAILY_POST_LIMITS.swarm
+        : DAILY_POST_LIMITS.general;
+      const day = utcDayBounds(new Date());
+      let used: number;
+      try {
+        used = await countRoomMessages(supabase, agent.id, honeycomb.id, day.since, day.until);
+      } catch (e) {
+        console.error('honeycombs/post: room count failed, refusing', e instanceof Error ? e.message : e);
+        return NextResponse.json({ error: 'room_count_unavailable' }, { status: 503 });
+      }
+      if (typeof used !== 'number' || !Number.isFinite(used)) {
+        return NextResponse.json({ error: 'room_count_unavailable' }, { status: 503 });
+      }
+      if (used >= limit) return NextResponse.json({ error: 'daily_room_limit' }, { status: 422 });
     }
 
     // Post the message
