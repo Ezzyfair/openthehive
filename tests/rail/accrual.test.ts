@@ -1277,7 +1277,7 @@ test('(qq) F1 · a one-time payment that also made an invoice reverses on the se
   assert.equal(calls[0].args.p_invoice_ref, 'in_post_purchase_1');
   assert.equal(calls[1].args.p_invoice_ref, 'pi_invcreate_1');
   assert.equal(db.rows.referral_earnings.filter((r) => r.status === 'reversed').length, 2);
-  assert.equal(db.failures().filter((r) => r.reason !== OLD_SUBSCRIPTION_OPEN_REASON).length, 0, 'nothing was quarantined');
+  assert.equal(db.failures().filter((r) => r.reason !== OLD_SUBSCRIPTION_OPEN_REASON).length, 0, 'no classification-failure quarantine row');
 });
 
 test('(qq2) F1 · a subscription refund takes the second look too, and still finds nothing', async () => {

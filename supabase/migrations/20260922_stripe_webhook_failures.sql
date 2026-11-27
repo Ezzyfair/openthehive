@@ -39,6 +39,14 @@
 -- been dealt with by hand. Nothing in the code writes it, by design: the route can tell
 -- you an event failed, and it cannot tell you a person has finished with it.
 --
+-- AMENDED Nov 25, 2026 (MEMBER-UPSERT-001, MEMBER-UPSERT-001-b; NIK-MEMBER-UPSERT-001 MED-1).
+-- Two statements above are no longer the whole truth:
+--   * This table also holds TO-DO rows for events that SUCCEEDED (reason
+--     'upgrade_old_subscription_open'). The column kind, added by
+--     20261125_webhook_failures_kind.sql, tells the two apart: 'failure' (the default) or 'todo'.
+--   * The code DOES write resolved_at, for rows of that one reason only, when Stripe reports
+--     the earlier subscription over (Francis, ruling N2, Nov 22, 2026).
+--
 -- POSTURE (same as the money tables, the Antenna tables and stripe_events): RLS enabled
 -- with ZERO policies, REVOKE ALL FROM anon, authenticated, explicit GRANT to
 -- service_role. Nothing but the service role inside the webhook route touches this.

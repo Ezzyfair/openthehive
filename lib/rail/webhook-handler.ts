@@ -46,6 +46,7 @@ import { randomBytes } from 'node:crypto';
 import { upgradeCohortForTierChange } from '@/lib/cohort-assignment';
 import { canonicalTier, tierRank } from '@/lib/tier';
 import { sendEmail } from '@/lib/mail/sendEmail';
+import { closeOldSubscriptionAlerts } from '@/lib/rail/upgrade-alerts';
 
 /** What the route needs to turn this into an HTTP response. */
 export interface HandlerResult {
@@ -155,7 +156,7 @@ async function postWelcome(supabase: any, honeycombId: string, agentName: string
  */
 export async function recordWebhookFailure(
   supabase: any,
-  row: { event_id: string; event_type: string; reason: string; detail?: any },
+  row: { event_id: string; event_type: string; reason: string; detail?: any; kind?: 'failure' | 'todo' },
 ) {
   try {
     const { error } = await supabase.from('stripe_webhook_failures').insert(row);
@@ -232,7 +233,7 @@ async function alertQuarantine(
     '<pre>SELECT * FROM stripe_webhook_failures WHERE event_id = \'' + args.event_id + '\';</pre>',
     '<p>Everything still open:</p>',
     '<pre>SELECT id, event_id, event_type, reason, detail, created_at',
-    '  FROM stripe_webhook_failures WHERE resolved_at IS NULL ORDER BY created_at DESC;</pre>',
+    '  FROM stripe_webhook_failures WHERE resolved_at IS NULL AND kind = \'failure\' ORDER BY created_at DESC;</pre>',
     '</div>',
   ].join('');
   for (const to of recipients) {
@@ -502,10 +503,6 @@ export async function handleStripeEvent(
 
     if (email) {
       let agent: any = null;
-      // The bee is resolved by the checkout email. STRIPE-CHECKOUT-002 removed the metadata id on Nov 18, 2026, because a caller could choose it.
-      const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
-      agent = r2.data;
-      agentRecord = agent;
       // MEMBER-UPSERT-001 item 3 · read the row first, then decide which of five
       // cases this checkout is. Registration makes a row for every human before any
       // payment, so "the row exists" is not "second checkout": the test is whether
@@ -528,7 +525,8 @@ export async function handleStripeEvent(
       const heldTier: string | null = member?.tier ?? null;
       const memberCase: 'first' | 'retry' | 'returning' | 'upgrade' | 'not_upgrade' =
         !member || !heldCustomer ? 'first'
-          : heldCustomer === sessionCustomer && heldSubscription === sessionSubscription ? 'retry'
+          // MEMBER-UPSERT-001-b item 5 (NIK MED-2) · with no subscription on either side this is never RETRY: the lines below decide.
+          : heldCustomer === sessionCustomer && heldSubscription !== null && heldSubscription === sessionSubscription ? 'retry'
             : member.status === 'inactive' ? 'returning'
               : tierRank(canonical) > tierRank(member.tier) ? 'upgrade'
                 : 'not_upgrade';
@@ -536,6 +534,10 @@ export async function handleStripeEvent(
       // arm are kept byte for byte as on 4963408, so they are deliberately NOT
       // re-indented under the if.
       if (memberCase === 'first') {
+      // The bee is resolved by the checkout email. STRIPE-CHECKOUT-002 removed the metadata id on Nov 18, 2026, because a caller could choose it.
+      const r2 = await supabase.from('agents').select('id, name, soul').eq('email', email).single();
+      agent = r2.data;
+      agentRecord = agent;
       // §5.11, R19, WH-16 · crypto.randomBytes, not Math.random(). Math.random is
       // not a CSPRNG: its stream is predictable from prior output, so a referral code
       // was guessable, and a guessed code attributes someone else's chain. 4 bytes ->
@@ -635,6 +637,7 @@ export async function handleStripeEvent(
               event_id: event.id,
               event_type: event.type,
               reason: OLD_SUBSCRIPTION_OPEN_REASON,
+              kind: 'todo',
               detail: {
                 session: session.id,
                 member: member.id,
@@ -880,7 +883,9 @@ export async function handleStripeEvent(
         event_id: event.id, subscription: sub.id, status: sub.status,
         cancel_at_period_end: (sub as any).cancel_at_period_end ?? null,
       });
+      if ((sub as any).cancel_at_period_end === true) await closeOldSubscriptionAlerts(supabase, sub.id, now());
     } else {
+      await closeOldSubscriptionAlerts(supabase, sub.id, now());
       const result = await cancelMembership(supabase, sub.id);
       if (!result.ok) {
         console.error('subscription cancellation failed', {
